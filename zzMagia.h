@@ -1,5 +1,4 @@
-#include <boost/optional.hpp>
-//questo file è un sacco disordinato, fossi in te non ci metterei le mani e salterei in fondo
+//questo file è un fottuto casino, fossi in te non ci metterei le mani e salterei in fondo
 
 #ifndef SOLOFUN
 #define SOLOFUN
@@ -68,13 +67,9 @@
 	out=fopen("saved_decks.txt","w");
 	fprintf(out,"{\n\"8\":{\"name\":\"Conquest\",\"cards\":\"%s\"}\n}",ret);
 	fclose(out);
-	}
+	
 #endif
 #ifndef FUNZIONI_DICHIARABILI
 #define FUNZIONI_DICHIARABILI
 
-void normalizza(boost::optional<std::string> card_name)
-{
-	
-}
 #endif

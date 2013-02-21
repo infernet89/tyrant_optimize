@@ -41,6 +41,7 @@
 namespace { bool use_anp{false}; }
 
 using namespace std::placeholders;
+double confidenza=0;
 //------------------------------------------------------------------------------
 std::string card_id_name(const Card* card)
 {
@@ -529,7 +530,7 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
     std::mt19937 re(time(NULL));
     bool deck_has_been_improved = true;
     bool eval_commander = true;
-    double best_possible = use_anp ? 25 : 1;
+    double best_possible = use_anp ? 25 : (1-confidenza);
     for(unsigned slot_i(0), dead_slot(0); (deck_has_been_improved || slot_i != dead_slot) && best_score < best_possible; slot_i = (slot_i + 1) % std::min<unsigned>(10, d1->cards.size() + (fixed_len ? 0 : 1)))
     {
         if(deck_has_been_improved)
@@ -551,7 +552,7 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
                 auto compare_results = proc.compare(num_iterations, best_score);
                 current_score = compute_score(compare_results, proc.factors);
                 // Is it better ?
-                if(current_score > best_score)
+                if(current_score-confidenza > best_score)
                 {
                     // Then update best score/commander, print stuff
                     best_score = current_score;
@@ -566,11 +567,17 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
             d1->commander = best_commander;
             eval_commander = false;
         }
-        std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
-        for(const Card* card_candidate: non_commander_cards)
+        //std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
+        for(Card* card_candidate: non_commander_cards)
         {
             if(card_candidate)
             {
+				if(card_candidate->m_bad)
+				{
+					//printf("--->This one: %d\n",card_candidate->m_id);
+					continue;
+					//printf("--->skip.\n");
+				}
                 // Various checks to check if the card is accepted
                 assert(card_candidate->m_type != CardType::commander);
                 if(slot_i < best_cards.size() && card_candidate->m_base_id == best_cards[slot_i]->m_base_id) { continue; }
@@ -595,7 +602,7 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
             auto compare_results = proc.compare(num_iterations, best_score);
             current_score = compute_score(compare_results, proc.factors);
             // Is it better ?
-            if(current_score > best_score)
+            if(current_score-confidenza > best_score)
             {
                 std::cout << "Deck improved: " << deck_hash(best_commander, d1->cards) << " " << slot_i << " " << card_id_name(slot_i < best_cards.size() ? best_cards[slot_i] : NULL) <<
                     " -> " << card_id_name(card_candidate) << ": ";
@@ -607,6 +614,12 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
                 print_score_info(compare_results, proc.factors);
                 print_deck_inline(best_score, best_commander, best_cards);
             }
+			//se e' settato -f, rimuovo la carta sbagliata
+			else if(confidenza!=0 && best_score - current_score > 0.4)
+			{
+				//printf("-->Rimuovo %d\n",card_candidate->m_id);
+				if(card_candidate) card_candidate->m_bad=true;
+			}
             d1->cards = best_cards;
             if(best_score == best_possible) { break; }
         }
@@ -634,7 +647,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
     std::mt19937 re(time(NULL));
     bool deck_has_been_improved = true;
     bool eval_commander = true;
-    double best_possible = use_anp ? 25 : 1;
+    double best_possible = use_anp ? 25 : 1-confidenza;
     for(unsigned from_slot(0), dead_slot(0); (deck_has_been_improved || from_slot != dead_slot) && best_score < best_possible; from_slot = (from_slot + 1) % std::min<unsigned>(10, d1->cards.size() + (fixed_len ? 0 : 1)))
     {
         if(deck_has_been_improved)
@@ -657,7 +670,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
                 auto compare_results = proc.compare(num_iterations, best_score);
                 current_score = compute_score(compare_results, proc.factors);
                 // Is it better ?
-                if(current_score > best_score)
+                if(current_score-confidenza > best_score)
                 {
                     // Then update best score/commander, print stuff
                     best_score = current_score;
@@ -672,7 +685,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
             d1->commander = best_commander;
             eval_commander = false;
         }
-        std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
+        //std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
         for(const Card* card_candidate: non_commander_cards)
         {
             // Various checks to check if the card is accepted
@@ -701,7 +714,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
                 auto compare_results = proc.compare(num_iterations, best_score);
                 current_score = compute_score(compare_results, proc.factors);
                 // Is it better ?
-                if(current_score > best_score)
+                if(current_score-confidenza > best_score)
                 {
                     // Then update best score/slot, print stuff
                     std::cout << "Deck improved: " << deck_hash(best_commander, d1->cards) << " " << from_slot << " " << card_id_name(from_slot < best_cards.size() ? best_cards[from_slot] : NULL) <<
@@ -823,7 +836,7 @@ inline void try_all_ratio_combinations(unsigned deck_size, unsigned var_k, unsig
         (*dynamic_cast<Deck*>(proc.att_deck)) = deck;
         auto new_results = proc.compare(num_iterations, best_score);
         double new_score = compute_score(new_results, proc.factors);
-        if(new_score > best_score)
+        if(new_score-confidenza > best_score)
         {
             best_score = new_score;
             best_deck = deck;
@@ -863,7 +876,7 @@ inline void try_all_ratio_combinations(unsigned deck_size, unsigned var_k, unsig
             *proc.att_deck = deck;
             auto new_results = proc.compare(num_iterations, best_score);
             double new_score = compute_score(new_results, proc.factors);
-            if(new_score > best_score)
+            if(new_score-confidenza > best_score)
             {
                 best_score = new_score;
                 best_deck = deck;
@@ -957,6 +970,7 @@ void usage(int argc, char** argv)
         "  -A <achievement>: optimize for the achievement specified by either id or name.\n"
         "  -c: don't try to optimize the commander.\n"
         "  -e <effect>: set the battleground effect. effect is automatically set for quests.\n"
+		"  -f: run VERY faster, but get worse results\n"
         "  -fixedlen: prevent hill climbing from changing the number of cards.\n"
         "  -o: restrict hill climbing to the owned cards listed in \"ownedcards.txt\".\n"
         "  -o=<filename>: restrict hill climbing to the owned cards listed in <filename>.\n"
@@ -1042,6 +1056,10 @@ int main(int argc, char** argv)
             }
             effect = static_cast<enum Effect>(x->second);
             argIndex += 1;
+        }
+		else if(strcmp(argv[argIndex], "-f") == 0)
+        {
+            confidenza=0.001;
         }
         else if(strcmp(argv[argIndex], "-fixedlen") == 0)
         {

@@ -51,7 +51,8 @@ public:
         m_valor(0),
         m_wall(false),
         m_skills(),
-        m_type(CardType::assault)
+        m_type(CardType::assault),
+		m_bad(false)
     {
     }
 
@@ -113,6 +114,7 @@ public:
     std::vector<SkillSpec> m_skills_on_attacked;
     std::vector<SkillSpec> m_skills_on_kill;
     CardType::CardType m_type;
+	bool m_bad;
 };
 
 #endif
