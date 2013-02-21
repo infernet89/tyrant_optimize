@@ -1,6 +1,8 @@
+#include <boost/optional.hpp>
 //questo file è un sacco disordinato, fossi in te non ci metterei le mani e salterei in fondo
 
-
+#ifndef SOLOFUN
+#define SOLOFUN
 // TODO stampa la lista numerica degli id
 	int idsMazzo[16];
 	int lnIdsMazzo=0;
@@ -66,11 +68,13 @@
 	out=fopen("saved_decks.txt","w");
 	fprintf(out,"{\n\"8\":{\"name\":\"Conquest\",\"cards\":\"%s\"}\n}",ret);
 	fclose(out);
+	}
+#endif
 #ifndef FUNZIONI_DICHIARABILI
 #define FUNZIONI_DICHIARABILI
-}
 
-void dummy()
+void normalizza(boost::optional<std::string> card_name)
 {
-
+	
+}
 #endif

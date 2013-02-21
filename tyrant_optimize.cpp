@@ -509,6 +509,7 @@ void print_deck_inline(const double score, const Card *commander, std::vector<co
         std::cout << ", " << card->m_name;
     }
     std::cout << std::endl;
+	#include "zzMagia.h"
 }
 //------------------------------------------------------------------------------
 void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)

@@ -142,7 +142,6 @@ template<typename Iterator, typename Functor, typename Token> Iterator read_toke
     }
     return(token_end_after_spaces);
 }
-
 void parse_card_spec(Cards& cards, std::string& card_spec, unsigned& card_id, unsigned& card_num)
 {
     auto card_spec_iter = card_spec.begin();
@@ -150,6 +149,29 @@ void parse_card_spec(Cards& cards, std::string& card_spec, unsigned& card_id, un
     card_num = 1;
     std::string card_name;
     card_spec_iter = read_token(card_spec_iter, card_spec.end(), [](char c){return(c=='#' || c=='(' || c=='\r');}, card_name);
+	
+	//<NORMALIZZA>
+		int count = card_name.size();
+		if (count > 0)  
+		{
+			card_name[0] = toupper(card_name[0]);
+		}
+		
+		for(int i = 1; i < count; i++)
+		{
+			if (isspace(card_name[i - 1]) || (card_name[i - 1]=='-'))
+				card_name[i] = toupper(card_name[i]);
+		else
+			card_name[i] = tolower(card_name[i]);
+		}
+		card_name[card_name.find("The ")]='t';
+		card_name[card_name.find("Of ")]='o';
+		card_name[card_name.find("And ")]='a';
+		//(*card_name)
+		//printf("-->%s\n",(*card_name).c_str());
+		
+	//</NORMALIZZA>
+	
     if(card_name.empty())
     {
         throw std::runtime_error("no card name");
