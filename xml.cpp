@@ -5,6 +5,7 @@
 #include <iostream>
 #include <map>
 #include <stdexcept>
+#include <algorithm>
 #include "rapidxml.hpp"
 #include "card.h"
 #include "cards.h"
@@ -245,6 +246,8 @@ void read_cards(Cards& cards)
                     { c->m_intercept = true; }
                     if(strcmp(skill->first_attribute("id")->value(), "leech") == 0)
                     { c->m_leech = atoi(skill->first_attribute("x")->value()); }
+                    if(strcmp(skill->first_attribute("id")->value(), "legion") == 0)
+                    { c->m_legion = atoi(skill->first_attribute("x")->value()); }
                     if(strcmp(skill->first_attribute("id")->value(), "payback") == 0)
                     { c->m_payback = true; }
                     if(strcmp(skill->first_attribute("id")->value(), "pierce") == 0)
@@ -479,7 +482,9 @@ void read_achievement(Decks& decks, const Cards& cards, Achievement& achievement
     std::map<std::string, int> skill_map;
     for(unsigned i(0); i < Skill::num_skills; ++i)
     {
-        skill_map[skill_names[i]] = i;
+        std::string skill_id{skill_names[i]};
+        std::transform(skill_id.begin(), skill_id.end(), skill_id.begin(), ::tolower);
+        skill_map[skill_id] = i;
     }
 
     for(xml_node<>* achievement_node = root->first_node();
