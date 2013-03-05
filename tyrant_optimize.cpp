@@ -183,7 +183,7 @@ bool suitable_non_commander(const Deck& deck, unsigned slot, const Card* card)
     {
         for(unsigned i(0); i < deck.cards.size(); ++i)
         {
-            if(i != slot && deck.cards[i]->m_base_id == card->m_base_id)
+            if(i != slot && deck.cards[i]->m_name == card->m_name)
             {
                 return(false);
             }
@@ -548,7 +548,7 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
             {
                 // Various checks to check if the card is accepted
                 assert(commander_candidate->m_type == CardType::commander);
-                if(commander_candidate->m_base_id == best_commander->m_base_id) { continue; }
+                if(commander_candidate->m_name == best_commander->m_name) { continue; }
                 if(!suitable_commander(commander_candidate)) { continue; }
                 // Place it in the deck
                 d1->commander = commander_candidate;
@@ -584,7 +584,7 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
 				}
                 // Various checks to check if the card is accepted
                 assert(card_candidate->m_type != CardType::commander);
-                if(slot_i < best_cards.size() && card_candidate->m_base_id == best_cards[slot_i]->m_base_id) { continue; }
+                if(slot_i < best_cards.size() && card_candidate->m_name == best_cards[slot_i]->m_name) { continue; }
                 if(!suitable_non_commander(*d1, slot_i, card_candidate)) { continue; }
                 // Place it in the deck
                 if(slot_i == d1->cards.size())
@@ -672,7 +672,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
                 if(best_score == best_possible) { break; }
                 // Various checks to check if the card is accepted
                 assert(commander_candidate->m_type == CardType::commander);
-                if(commander_candidate->m_base_id == best_commander->m_base_id) { continue; }
+                if(commander_candidate->m_name == best_commander->m_name) { continue; }
                 if(!suitable_commander(commander_candidate)) { continue; }
                 // Place it in the deck
                 d1->commander = commander_candidate;
@@ -705,7 +705,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
                 if(card_candidate)
                 {
                     // Various checks to check if the card is accepted
-                    if(to_slot < best_cards.size() && card_candidate->m_base_id == best_cards[to_slot]->m_base_id) { continue; }
+                    if(to_slot < best_cards.size() && card_candidate->m_name == best_cards[to_slot]->m_name) { continue; }
                     if(!suitable_non_commander(*d1, from_slot, card_candidate)) { continue; }
                     // Place it in the deck
                     if(from_slot < d1->cards.size())
@@ -1227,19 +1227,10 @@ int main(int argc, char** argv)
 
     effect = quest_effect.get_value_or(effect);
     modify_cards(cards, effect);
-    std::cout << "Attacker:" << std::endl;
-    std::cout << att_deck->long_description() << std::endl;
-    std::cout << "Defender:" << std::endl;
+    std::cout << "Attacker: " << (debug_print ? att_deck->long_description() : att_deck->short_description()) << std::endl;
     for(auto def_deck: def_decks)
     {
-        if(def_decks.size() > 2)
-        {
-            std::cout << def_deck->short_description() << std::endl;
-        }
-        else
-        {
-            std::cout << def_deck->long_description() << std::endl;
-        }
+        std::cout << "Defender: " << (debug_print ? def_deck->long_description() : def_deck->short_description()) << std::endl;
     }
 
     Process p(num_threads, cards, decks, att_deck, def_decks, def_decks_factors, gamemode, effect, achievement);
