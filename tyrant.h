@@ -1,6 +1,8 @@
 #ifndef TYRANT_H_INCLUDED
 #define TYRANT_H_INCLUDED
 
+#define TYRANT_OPTIMIZER_VERSION "1.0.3"
+
 #include <string>
 #include <set>
 #include <tuple>
@@ -19,6 +21,8 @@ extern const std::string faction_names[num_factions];
 
 enum Skill
 {
+    // Attack:
+    attack,
     // Activation (including Destroyed):
     augment, backfire, chaos, cleanse, enfeeble, freeze, heal, infuse, jam,
     mimic, protect, rally, recharge, repair, rush, shock, siege, strike, summon, supply,
@@ -30,16 +34,26 @@ enum Skill
     // Damage-Dependant:
     berserk, crush, disease, immobilize, leech, poison, siphon,
     // Defensive:
-    armored, counter, emulate, evade, flying, intercept, payback, refresh, regenerate, tribute, wall,
+    armored, counter, emulate, evade, flying, intercept, payback, refresh, regenerate, stun, tribute, wall,
     // Triggered:
     blitz, legion,
     // Static, ignored:
     /* blizzard, fusion, mist, */
-    // Misc:
-    attack,
-    num_skills};
+    num_skills
+};
 extern std::string skill_names[num_skills];
 extern std::set<Skill> helpful_skills;
+
+enum SkillActivationModifier
+{
+    on_act,
+    on_play,
+    on_attacked,
+    on_kill,
+    on_death,
+    num_skill_activation_modifiers
+};
+extern std::string skill_activation_modifier_names[num_skill_activation_modifiers];
 
 namespace CardType {
 enum CardType {
@@ -93,6 +107,18 @@ enum Effect {
 
 extern std::string effect_names[Effect::num_effects];
 
+enum AchievementMiscReq
+{
+    unit_with_flying_killed,  // 104 Sky Control
+    skill_activated,  // 105 Brute Strength
+    turns,  // all "Speedy" and "Slow"
+    damage,  // 168 SMASH!; 183 Rally Free Zone
+    com_total,  // 169 Overkill; 170 EXTREME Overkill!!!
+    num_achievement_misc_reqs
+};
+
+extern std::string achievement_misc_req_names[num_achievement_misc_reqs];
+
 enum gamemode_t
 {
     fight,
@@ -122,6 +148,6 @@ enum SkillSourceType
     source_chaos
 };
 
-typedef std::tuple<Skill, unsigned, Faction, bool /* all */> SkillSpec;
+typedef std::tuple<Skill, unsigned, Faction, bool /* all */, SkillActivationModifier> SkillSpec;
 
 #endif

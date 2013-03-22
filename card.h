@@ -46,6 +46,7 @@ public:
         m_set(0),
         m_siphon(0),
         m_split(false),
+        m_stun(false),
         m_swipe(false),
         m_tribute(false),
         m_unique(false),
@@ -58,15 +59,15 @@ public:
     }
 
     void add_skill(Skill v1, unsigned v2, Faction v3, bool v4)
-    { m_skills.push_back(std::make_tuple(v1, v2, v3, v4)); }
+    { m_skills.push_back(std::make_tuple(v1, v2, v3, v4, on_act)); }
     void add_played_skill(Skill v1, unsigned v2, Faction v3, bool v4)
-    { m_skills_on_play.push_back(std::make_tuple(v1, v2, v3, v4)); }
+    { m_skills_on_play.push_back(std::make_tuple(v1, v2, v3, v4, on_play)); }
     void add_died_skill(Skill v1, unsigned v2, Faction v3, bool v4)
-    { m_skills_on_death.push_back(std::make_tuple(v1, v2, v3, v4)); }
+    { m_skills_on_death.push_back(std::make_tuple(v1, v2, v3, v4, on_death)); }
     void add_attacked_skill(Skill v1, unsigned v2, Faction v3, bool v4)
-    { m_skills_on_attacked.push_back(std::make_tuple(v1, v2, v3, v4)); }
+    { m_skills_on_attacked.push_back(std::make_tuple(v1, v2, v3, v4, on_attacked)); }
     void add_kill_skill(Skill v1, unsigned v2, Faction v3, bool v4)
-    { m_skills_on_kill.push_back(std::make_tuple(v1, v2, v3, v4)); }
+    { m_skills_on_kill.push_back(std::make_tuple(v1, v2, v3, v4, on_kill)); }
 
     unsigned m_antiair;
     unsigned m_armored;
@@ -105,6 +106,7 @@ public:
     int m_set;
     unsigned m_siphon;
     bool m_split;
+    bool m_stun;
     bool m_swipe;
     bool m_tribute;
     bool m_unique;

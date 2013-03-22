@@ -18,10 +18,28 @@ class Achievement;
 extern bool debug_print;
 extern bool debug_line;
 extern unsigned turn_limit;
-extern bool win_tie;
+
+//---------------------- Represent Simulation Results ----------------------------
+template<typename result_type>
+struct Results
+{
+    result_type wins;
+    result_type draws;
+    result_type losses;
+    result_type points;
+    template<typename other_result_type>
+    Results& operator+=(const Results<other_result_type>& other)
+    {
+        wins += other.wins;
+        draws += other.draws;
+        losses += other.losses;
+        points += other.points;
+        return *this;
+    }
+};
 
 void fill_skill_table();
-unsigned play(Field* fd);
+Results<unsigned> play(Field* fd);
 void modify_cards(Cards& cards, enum Effect effect);
 // Pool-based indexed storage.
 //---------------------- Pool-based indexed storage ----------------------------
@@ -88,6 +106,13 @@ public:
     boost::pool<> m_pool;
 };
 //------------------------------------------------------------------------------
+enum class CardStep
+{
+    none,
+    attacking,
+    attacked,
+};
+//------------------------------------------------------------------------------
 struct CardStatus
 {
     const Card* m_card;
@@ -109,10 +134,11 @@ struct CardStatus
     unsigned m_poisoned;
     unsigned m_protected;
     unsigned m_rallied;
+    unsigned m_stunned;
     unsigned m_weakened;
     bool m_temporary_split;
     bool m_summoned; // is this card summoned?
-    bool m_attacked; // has this card attacked in the turn?
+    CardStep m_step;
 
     CardStatus() {}
     CardStatus(const Card* card);
@@ -217,12 +243,38 @@ public:
     }
 
     template <class T>
-    inline void inc_counter(T& container, unsigned key)
+    inline void set_counter(T& container, unsigned key, unsigned value)
     {
         auto x = container.find(key);
         if(x != container.end())
         {
-            ++ achievement_counter[x->second];
+            achievement_counter[x->second] = value;
+        }
+    }
+
+    template <class T>
+    inline void inc_counter(T& container, unsigned key, unsigned value = 1)
+    {
+        auto x = container.find(key);
+        if(x != container.end())
+        {
+            achievement_counter[x->second] += value;
+#if 0
+            if(achievement.req_counter[x->second].predict_monoinc(achievement_counter[x->second]) < 0)
+            {
+                end = true;
+            }
+#endif
+        }
+    }
+
+    template <class T>
+    inline void update_max_counter(T& container, unsigned key, unsigned value)
+    {
+        auto x = container.find(key);
+        if(x != container.end() && achievement_counter[x->second] < value)
+        {
+            achievement_counter[x->second] = value;
 #if 0
             if(achievement.req_counter[x->second].predict_monoinc(achievement_counter[x->second]) < 0)
             {

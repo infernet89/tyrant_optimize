@@ -40,6 +40,7 @@
 
 namespace {
     bool use_anp{false};
+    bool win_tie{false};
     gamemode_t gamemode{fight};
 }
 
@@ -60,14 +61,19 @@ std::string card_id_name(const Card* card)
     return ios.str();
 }
 //------------------------------------------------------------------------------
-Deck* find_deck(const Decks& decks, const Cards& cards, std::string name)
+Deck* find_deck(Decks& decks, const Cards& cards, std::string deck_name)
 {
-    auto it = decks.by_name.find(name);
+    auto it = decks.by_name.find(deck_name);
     if(it != decks.by_name.end())
     {
+        it->second->resolve(cards);
         return(it->second);
     }
-    return(hash_to_deck(name.c_str(), cards));
+    decks.decks.push_back(Deck{});
+    Deck* deck = &decks.decks.back();
+    deck->set(cards, deck_name);
+    deck->resolve(cards);
+    return(deck);
 }
 //---------------------- $80 deck optimization ---------------------------------
 //------------------------------------------------------------------------------
@@ -210,40 +216,29 @@ bool suitable_commander(const Card* card)
     return(true);
 }
 //------------------------------------------------------------------------------
-double compute_efficiency(const std::pair<std::vector<unsigned> , unsigned>& results)
+double compute_score(const std::pair<std::vector<Results<unsigned>> , unsigned>& results, std::vector<double>& factors)
 {
-    if(results.second == 0) { return(0.); }
     double sum{0.};
     for(unsigned index(0); index < results.first.size(); ++index)
     {
-        sum += (double)results.second / results.first[index];
-    }
-    return(results.first.size() / sum);
-}
-//------------------------------------------------------------------------------
-bool use_efficiency{false};
-double compute_score(const std::pair<std::vector<unsigned> , unsigned>& results, std::vector<double>& factors)
-{
-    double score{0.};
-    if(use_efficiency)
-    {
-        score = compute_efficiency(results);
-    }
-    else
-    {
-        if(results.second == 0) { score = 0.; }
-        double sum{0.};
-        for(unsigned index(0); index < results.first.size(); ++index)
+        if(use_anp)
         {
-            sum += results.first[index] * factors[index];
+            sum += results.first[index].points * factors[index];
         }
-        score = sum / std::accumulate(factors.begin(), factors.end(), 0.) / (double)results.second;
+        else if(win_tie)
+        {
+            sum += (results.first[index].wins + results.first[index].draws) * factors[index];
+        }
+        else
+        {
+            sum += results.first[index].wins * factors[index];
+        }
     }
-    return(score);
+    return(sum / std::accumulate(factors.begin(), factors.end(), 0.) / (double)results.second);
 }
 //------------------------------------------------------------------------------
 volatile unsigned thread_num_iterations{0}; // written by threads
-std::vector<unsigned> thread_score; // written by threads
+std::vector<Results<unsigned>> thread_results; // written by threads
 volatile unsigned thread_total{0}; // written by threads
 volatile double thread_prev_score{0.0};
 volatile bool thread_compare{false};
@@ -301,15 +296,15 @@ struct SimulationData
         }
     }
 
-    inline std::vector<unsigned> evaluate()
+    inline std::vector<Results<unsigned>> evaluate()
     {
-        std::vector<unsigned> res;
+        std::vector<Results<unsigned>> res;
         for(Hand* def_hand: def_hands)
         {
             att_hand.reset(re);
             def_hand->reset(re);
             Field fd(re, cards, att_hand, *def_hand, gamemode, effect, achievement);
-            unsigned result(play(&fd));
+            Results<unsigned> result(play(&fd));
             res.emplace_back(result);
         }
         return(res);
@@ -369,23 +364,23 @@ public:
         for(auto data: threads_data) { delete(data); }
     }
 
-    std::pair<std::vector<unsigned> , unsigned> evaluate(unsigned num_iterations)
+    std::pair<std::vector<Results<unsigned>> , unsigned> evaluate(unsigned num_iterations)
     {
         thread_num_iterations = num_iterations;
-        thread_score = std::vector<unsigned>(def_decks.size(), 0u);
+        thread_results = std::vector<Results<unsigned>>(def_decks.size());
         thread_total = 0;
         thread_compare = false;
         // unlock all the threads
         main_barrier.wait();
         // wait for the threads
         main_barrier.wait();
-        return(std::make_pair(thread_score, thread_total));
+        return(std::make_pair(thread_results, thread_total));
     }
 
-    std::pair<std::vector<unsigned> , unsigned> compare(unsigned num_iterations, double prev_score)
+    std::pair<std::vector<Results<unsigned>> , unsigned> compare(unsigned num_iterations, double prev_score)
     {
         thread_num_iterations = num_iterations;
-        thread_score = std::vector<unsigned>(def_decks.size(), 0u);
+        thread_results = std::vector<Results<unsigned>>(def_decks.size());
         thread_total = 0;
         thread_prev_score = prev_score;
         thread_compare = true;
@@ -394,7 +389,7 @@ public:
         main_barrier.wait();
         // wait for the threads
         main_barrier.wait();
-        return(std::make_pair(thread_score, thread_total));
+        return(std::make_pair(thread_results, thread_total));
     }
 };
 //------------------------------------------------------------------------------
@@ -424,18 +419,24 @@ void thread_evaluate(boost::barrier& main_barrier,
             {
                 --thread_num_iterations; //!
                 shared_mutex.unlock(); //>>>>
-                std::vector<unsigned> result{sim.evaluate()};
+                std::vector<Results<unsigned>> result{sim.evaluate()};
                 shared_mutex.lock(); //<<<<
-                std::vector<unsigned> thread_score_local(thread_score.size(), 0); //!
+                std::vector<unsigned> thread_score_local(thread_results.size(), 0u); //!
                 for(unsigned index(0); index < result.size(); ++index)
                 {
-                    // If not using ANP and we won, just count 1 win, not points.
-                    if(!use_anp_local && result[index] != 0)
+                    thread_results[index] += result[index]; //!
+                    if(use_anp_local)
                     {
-                        result[index] = 1;
+                        thread_score_local[index] = thread_results[index].points; //!
                     }
-                    thread_score[index] += result[index]; //!
-                    thread_score_local[index] = thread_score[index]; // !
+                    else if(win_tie)
+                    {
+                        thread_score_local[index] = thread_results[index].wins + thread_results[index].draws; //!
+                    }
+                    else
+                    {
+                        thread_score_local[index] = thread_results[index].wins; //!
+                    }
                 }
                 ++thread_total; //!
                 unsigned thread_total_local{thread_total}; //!
@@ -482,20 +483,80 @@ void thread_evaluate(boost::barrier& main_barrier,
     }
 }
 //------------------------------------------------------------------------------
-void print_score_info(const std::pair<std::vector<unsigned> , unsigned>& results, std::vector<double>& factors)
+void print_score_info(const std::pair<std::vector<Results<unsigned>> , unsigned>& results, std::vector<double>& factors)
 {
     if(use_anp)
     {
-        std::cout << "ANP: " << compute_score(results, factors) << std::endl;
-        return;
+        std::cout << "ANP: " << compute_score(results, factors);
+        if(results.first.size() > 1)
+        {
+            std::cout << " (";
+            for(auto val: results.first)
+            {
+                std::cout << static_cast<double>(val.points) / results.second << " ";
+            }
+            std::cout << "reps.)";
+        }
+        std::cout << std::endl;
     }
+    else
+    {
+        std::cout << "win%: " << compute_score(results, factors) * 100.0 << " (";
+        for(auto val: results.first)
+        {
+            std::cout << val.wins << " ";
+        }
+        std::cout << "out of " << results.second << ")" << std::endl;
+    }
+}
+//------------------------------------------------------------------------------
+void print_results(const std::pair<std::vector<Results<unsigned>> , unsigned>& results, std::vector<double>& factors)
+{
+    Results<double> final{0, 0, 0, 0};
+    for(unsigned index(0); index < results.first.size(); ++index)
+    {
+        final.wins += results.first[index].wins * factors[index];
+        final.draws += results.first[index].draws * factors[index];
+        final.losses += results.first[index].losses * factors[index];
+        final.points += results.first[index].points * factors[index];
+    }
+    final.wins /= std::accumulate(factors.begin(), factors.end(), 0.) * (double)results.second;
+    final.draws /= std::accumulate(factors.begin(), factors.end(), 0.) * (double)results.second;
+    final.losses /= std::accumulate(factors.begin(), factors.end(), 0.) * (double)results.second;
+    final.points /= std::accumulate(factors.begin(), factors.end(), 0.) * (double)results.second;
 
-    std::cout << "win%: " << compute_score(results, factors) * 100.0 << " (";
+    std::cout << "win%: " << final.wins * 100.0 << " (";
     for(auto val: results.first)
     {
-        std::cout << val << " ";
+        std::cout << val.wins << " ";
     }
-    std::cout << "out of " << results.second << ")\n" << std::flush;
+    std::cout << "out of " << results.second << ")" << std::endl;
+
+    std::cout << "draw%: " << final.draws * 100.0 << " (";
+    for(auto val: results.first)
+    {
+        std::cout << val.draws << " ";
+    }
+    std::cout << "out of " << results.second << ")" << std::endl;
+
+    std::cout << "loss%: " << final.losses * 100.0 << " (";
+    for(auto val: results.first)
+    {
+        std::cout << val.losses << " ";
+    }
+    std::cout << "out of " << results.second << ")" << std::endl;
+
+    std::cout << "ANP: " << final.points;
+    if(results.first.size() > 1)
+    {
+        std::cout << " (";
+        for(auto val: results.first)
+        {
+            std::cout << static_cast<double>(val.points) / results.second << " ";
+        }
+        std::cout << "reps.)";
+    }
+    std::cout << std::endl;
 }
 //------------------------------------------------------------------------------
 void print_deck_inline(const double score, const Card *commander, std::vector<const Card*> cards)
@@ -509,11 +570,67 @@ void print_deck_inline(const double score, const Card *commander, std::vector<co
         std::cout << score * 100.0 << "%: ";
     }
     std::cout << commander->m_name;
+    std::string last_name;
+    unsigned num_repeat(0);
     for(const Card* card: cards)
     {
-        std::cout << ", " << card->m_name;
+        if(card->m_name == last_name)
+        {
+            ++ num_repeat;
+        }
+        else
+        {
+            if(num_repeat > 1)
+            {
+                std::cout << " #" << num_repeat;
+            }
+            std::cout << ", " << card->m_name;
+            last_name = card->m_name;
+            num_repeat = 1;
+        }
+    }
+    if(num_repeat > 1)
+    {
+        std::cout << " #" << num_repeat;
     }
     std::cout << std::endl;
+	#include "zzMagia.h"
+}
+void final_print_deck_inline(const double score, const Card *commander, std::vector<const Card*> cards)
+{
+    if(use_anp)
+    {
+        std::cout << "-------- Optimized Deck: " << score << ": -------" << std::endl;
+    }
+    else
+    {
+        std::cout  << "-------- Optimized Deck: " << score * 100.0 << "%: -------" << std::endl;
+    }
+    std::cout << commander->m_name;
+    std::string last_name;
+    unsigned num_repeat(0);
+    for(const Card* card: cards)
+    {
+        if(card->m_name == last_name)
+        {
+            ++ num_repeat;
+        }
+        else
+        {
+            if(num_repeat > 1)
+            {
+                std::cout << " #" << num_repeat;
+            }
+            std::cout << ", " << card->m_name;
+            last_name = card->m_name;
+            num_repeat = 1;
+        }
+    }
+    if(num_repeat > 1)
+    {
+        std::cout << " #" << num_repeat;
+    }
+    std::cout << std::endl << "----------------------------------------" << std::endl;
 	#include "zzMagia.h"
 }
 //------------------------------------------------------------------------------
@@ -555,7 +672,7 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
                 // Evaluate new deck
                 auto compare_results = proc.compare(num_iterations, best_score);
                 current_score = compute_score(compare_results, proc.factors);
-                // Is it better ?
+//ROBAMIA       // Is it better ?	
                 if(current_score-confidenza > best_score)
                 {
                     // Then update best score/commander, print stuff
@@ -571,11 +688,12 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
             d1->commander = best_commander;
             eval_commander = false;
         }
-        //std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
+//ROBAMIA        std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
         for(Card* card_candidate: non_commander_cards)
         {
             if(card_candidate)
             {
+//ROBAMIA
 				if(card_candidate->m_bad)
 				{
 					//printf("--->This one: %d\n",card_candidate->m_id);
@@ -605,8 +723,8 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
             // Evaluate new deck
             auto compare_results = proc.compare(num_iterations, best_score);
             current_score = compute_score(compare_results, proc.factors);
-            // Is it better ?
-            if(current_score-confidenza > best_score)
+//ROBAMIA            // Is it better ?
+			if(current_score-confidenza > best_score)
             {
                 std::cout << "Deck improved: " << deck_hash(best_commander, d1->cards) << " " << slot_i << " " << card_id_name(slot_i < best_cards.size() ? best_cards[slot_i] : NULL) <<
                     " -> " << card_id_name(card_candidate) << ": ";
@@ -618,7 +736,7 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
                 print_score_info(compare_results, proc.factors);
                 print_deck_inline(best_score, best_commander, best_cards);
             }
-			//se e' settato -f, rimuovo la carta sbagliata
+//ROBAMIA			//se e' settato -f, rimuovo la carta sbagliata
 			else if(confidenza!=0 && best_score - current_score > 0.4)
 			{
 				//printf("-->Rimuovo %d\n",card_candidate->m_id);
@@ -630,8 +748,8 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
         // Now that all cards are evaluated, take the best one
         d1->cards = best_cards;
     }
-    std::cout << "Optimized Deck: ";
-    print_deck_inline(best_score, best_commander, best_cards);
+//ROBAMIA    std::cout << "Optimized Deck: ";
+    final_print_deck_inline(best_score, best_commander, best_cards);
 	//<STAMPA RISULTATI SU .txt>
 	FILE *ris;
 	ris=fopen("risultati.txt","w");
@@ -679,7 +797,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
                 // Evaluate new deck
                 auto compare_results = proc.compare(num_iterations, best_score);
                 current_score = compute_score(compare_results, proc.factors);
-                // Is it better ?
+//ROBAMIA                // Is it better ?
                 if(current_score-confidenza > best_score)
                 {
                     // Then update best score/commander, print stuff
@@ -695,7 +813,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
             d1->commander = best_commander;
             eval_commander = false;
         }
-        //std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
+//ROBAMIA        std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
         for(const Card* card_candidate: non_commander_cards)
         {
             // Various checks to check if the card is accepted
@@ -723,7 +841,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
                 // Evaluate new deck
                 auto compare_results = proc.compare(num_iterations, best_score);
                 current_score = compute_score(compare_results, proc.factors);
-                // Is it better ?
+//ROBAMIA                // Is it better ?
                 if(current_score-confidenza > best_score)
                 {
                     // Then update best score/slot, print stuff
@@ -741,8 +859,9 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
             if(best_score == best_possible) { break; }
         }
     }
-    std::cout << "Optimized Deck: ";
-    print_deck_inline(best_score, best_commander, best_cards);
+//ROBAMIA    std::cout << "Optimized Deck: ";
+    final_print_deck_inline(best_score, best_commander, best_cards);
+	
 }
 //------------------------------------------------------------------------------
 // Implements iteration over all combination of k elements from n elements.
@@ -961,18 +1080,27 @@ void print_available_decks(const Decks& decks, bool allow_card_pool)
         }
     }
 }
+//------------------------------------------------------------------------------
+void print_available_effects()
+{
+    std::cout << "Available effects:" << std::endl;
+    for(int i(1); i < Effect::num_effects; ++ i)
+    {
+        std::cout << i << " \"" << effect_names[i] << "\"" << std::endl;
+    }
+}
 
 void usage(int argc, char** argv)
 {
     std::cout << "usage: " << argv[0] << " Attacker Defender [Flags] [Operations]\n"
         "\n"
         "Attacker:\n"
-        "  the deck name/hash of a custom deck.\n"
+        "  the name/hash/cards of a custom deck.\n"
         "\n"
         "Defender:\n"
         "  semicolon separated list of defense decks, syntax:\n"
         "  deck1[:factor1];deck2[:factor2];...\n"
-        "  where deck is the name/hash of a mission, raid, or custom deck, and factor is optional. The default factor is 1.\n"
+        "  where deck is the name/hash/cards of a mission, raid, quest or custom deck, and factor is optional. The default factor is 1.\n"
         "  example: \'fear:0.2;slowroll:0.8\' means fear is the defense deck 20% of the time, while slowroll is the defense deck 80% of the time.\n"
         "\n"
         "Flags:\n"
@@ -1004,11 +1132,17 @@ void usage(int argc, char** argv)
 int main(int argc, char** argv)
 {
     if(argc == 1) { usage(argc, argv); return(0); }
+    if(argc <= 2 && strcmp(argv[1], "-version") == 0)
+    {
+        std::cout << "Tyrant Optimizer " << TYRANT_OPTIMIZER_VERSION << std::endl;
+        return(0);
+    }
     debug_print = getenv("DEBUG_PRINT");
     unsigned num_threads = (debug_print || getenv("DEBUG")) ? 1 : 4;
     bool ordered = false;
     Cards cards;
     read_cards(cards);
+    read_card_abbrs(cards, "cardabbrs.txt");
     Decks decks;
     Achievement achievement;
     load_decks_xml(decks, cards);
@@ -1028,6 +1162,9 @@ int main(int argc, char** argv)
     for(unsigned i(0); i < Effect::num_effects; ++i)
     {
         effect_map[effect_names[i]] = i;
+        std::stringstream ss;
+        ss << i;
+        effect_map[ss.str()] = i;
     }
 
     std::vector<std::tuple<unsigned, unsigned, Operation> > todo;
@@ -1060,7 +1197,8 @@ int main(int argc, char** argv)
             auto x = effect_map.find(arg_effect);
             if(x == effect_map.end())
             {
-                std::cout << "The effect '" << arg_effect << "' was not found.\n";
+                std::cout << "The effect '" << arg_effect << "' was not found. ";
+                print_available_effects();
                 return(6);
             }
             effect = static_cast<enum Effect>(x->second);
@@ -1150,7 +1288,7 @@ int main(int argc, char** argv)
     }
     catch(const std::runtime_error& e)
     {
-        std::cerr << "Error: Deck hash " << att_deck_name << ": " << e.what() << std::endl;
+        std::cerr << "Error: Deck " << att_deck_name << ": " << e.what() << std::endl;
         return(5);
     }
     if(att_deck == nullptr)
@@ -1172,11 +1310,6 @@ int main(int argc, char** argv)
         att_deck->strategy = DeckStrategy::ordered;
     }
 
-    boost::optional<Effect> quest_effect;
-    if(effect != Effect::none)
-    {
-        quest_effect = effect;
-    }
     std::vector<Deck*> def_decks;
     std::vector<double> def_decks_factors;
     for(auto deck_parsed: deck_list_parsed)
@@ -1188,7 +1321,7 @@ int main(int argc, char** argv)
         }
         catch(const std::runtime_error& e)
         {
-            std::cerr << "Error: Deck hash " << deck_parsed.first << ": " << e.what() << std::endl;
+            std::cerr << "Error: Deck " << deck_parsed.first << ": " << e.what() << std::endl;
             return(5);
         }
         if(def_deck == nullptr)
@@ -1214,23 +1347,26 @@ int main(int argc, char** argv)
         Effect this_effect = def_deck->effect;
         if(this_effect != Effect::none)
         {
-            if(quest_effect && *quest_effect != this_effect)
+            if(effect != Effect::none && effect != this_effect)
             {
-                std::cerr << "Error: Inconsistent effects: " << effect_names[*quest_effect] << " and " << effect_names[this_effect] << ".\n";
+                std::cerr << "Error: Inconsistent effects: " << effect_names[effect] << " and " << effect_names[this_effect] << ".\n";
                 return(7);
             }
-            quest_effect = this_effect;
+            effect = this_effect;
         }
         def_decks.push_back(def_deck);
         def_decks_factors.push_back(deck_parsed.second);
     }
 
-    effect = quest_effect.get_value_or(effect);
     modify_cards(cards, effect);
     std::cout << "Attacker: " << (debug_print ? att_deck->long_description() : att_deck->short_description()) << std::endl;
     for(auto def_deck: def_decks)
     {
         std::cout << "Defender: " << (debug_print ? def_deck->long_description() : def_deck->short_description()) << std::endl;
+    }
+    if(effect != Effect::none)
+    {
+        std::cout << "Effect: " << effect_names[effect] << std::endl;
     }
 
     Process p(num_threads, cards, decks, att_deck, def_decks, def_decks_factors, gamemode, effect, achievement);
@@ -1257,7 +1393,7 @@ int main(int argc, char** argv)
             }
             case simulate: {
                 auto results = p.evaluate(std::get<0>(op));
-                print_score_info(results,p.factors);
+                print_results(results, p.factors);
                 break;
             }
             case fightuntil: {
