@@ -600,11 +600,11 @@ void final_print_deck_inline(const double score, const Card *commander, std::vec
 {
     if(use_anp)
     {
-        std::cout << "-------- Optimized Deck: " << score << ": -------" << std::endl;
+        std::cout << std::endl << "-------- Optimized Deck: " << score << ": -------" << std::endl;
     }
     else
     {
-        std::cout  << "-------- Optimized Deck: " << score * 100.0 << "%: -------" << std::endl;
+        std::cout << std::endl << "-------- Optimized Deck: " << score * 100.0 << "%: -------" << std::endl;
     }
     std::cout << commander->m_name;
     std::string last_name;
