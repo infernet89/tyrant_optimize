@@ -368,7 +368,7 @@ void evaluate_skills(Field* fd, CardStatus* status, const std::vector<SkillSpec>
     assert(fd->skill_queue.size() == 0);
     for(auto& skill: skills)
     {
-        _DEBUG_MSG("Evaluating %s skill %s\n", status_description(status).c_str(), skill_description(fd, skill).c_str());
+//        _DEBUG_MSG("Evaluating %s skill %s\n", status_description(status).c_str(), skill_description(fd, skill).c_str());
         bool fusion_active = status->m_card->m_fusion && status->m_player == fd->tapi && fd->fusion_count >= 3;
         auto& augmented_s = status->m_augmented > 0 ? augmented_skill(status, skill) : skill;
         auto& fusioned_s = fusion_active ? fusioned_skill(augmented_s) : augmented_s;
@@ -449,7 +449,7 @@ struct PlayCard
     {
         for(auto& skill: card->m_skills_on_play)
         {
-            _DEBUG_MSG("Evaluating %s skill %s\n", status_description(status).c_str(), skill_description(fd, skill).c_str());
+//            _DEBUG_MSG("Evaluating %s skill %s\n", status_description(status).c_str(), skill_description(fd, skill).c_str());
             fd->skill_queue.emplace_back(status, skill);
             resolve_skill(fd);
             if(fd->end) { break; }
@@ -503,7 +503,7 @@ void PlayCard::onPlaySkills<CardType::action>()
 {
     for(auto& skill: card->m_skills)
     {
-        _DEBUG_MSG("Evaluating %s skill %s\n", status_description(status).c_str(), skill_description(fd, skill).c_str());
+//        _DEBUG_MSG("Evaluating %s skill %s\n", status_description(status).c_str(), skill_description(fd, skill).c_str());
         fd->skill_queue.emplace_back(status, skill);
         resolve_skill(fd);
         if(fd->end) { break; }
@@ -540,7 +540,7 @@ Results<unsigned> play(Field* fd)
     // ANP: Last decision point is second-to-last card played.
     fd->points_since_last_decision = 0;
     unsigned p0_size = fd->players[0]->deck->cards.size();
-    fd->last_decision_turn = p0_size * 2 - (surge ? 2 : 3);
+    fd->last_decision_turn = p0_size * 2 - (fd->gamemode == surge ? 2 : 3);
 
     // Count commander as played for achievements (not count in type / faction / rarity requirements)
     fd->inc_counter(fd->achievement.unit_played, fd->players[0]->commander.m_card->m_id);
@@ -647,7 +647,7 @@ Results<unsigned> play(Field* fd)
                 _DEBUG_MSG("%s splits %s\n", status_description(&current_status).c_str(), status_description(&status_split).c_str());
                 for(auto& skill: status_split.m_card->m_skills_on_play)
                 {
-                    _DEBUG_MSG("Evaluating %s skill %s\n", status_description(&current_status).c_str(), skill_description(fd, skill).c_str());
+//                    _DEBUG_MSG("Evaluating %s skill %s\n", status_description(&current_status).c_str(), skill_description(fd, skill).c_str());
                     fd->skill_queue.emplace_back(&status_split, skill);
                     resolve_skill(fd);
                     if(fd->end) { break; }
@@ -995,6 +995,7 @@ void turn_start_phase(Field* fd)
             status.m_augmented = 0;
             status.m_blitzing = false;
             status.m_chaosed = false;
+            status.m_enfeebled = 0;
             status.m_frozen = false;
             status.m_immobilized = false;
             status.m_jammed = false;
@@ -1136,8 +1137,10 @@ struct PerformAttack
     {}
 
     template<enum CardType::CardType def_cardtype>
-    void op(unsigned pre_modifier_dmg)
+    void op()
     {
+        unsigned pre_modifier_dmg = attack_power(att_status);
+        if(pre_modifier_dmg == 0) { return; }
         count_achievement<attack>(fd, att_status);
         modify_attack_damage<def_cardtype>(pre_modifier_dmg);
         if(att_status->m_player == 0)
@@ -1320,7 +1323,7 @@ struct PerformAttack
         }
         for(auto& oa_skill: def_status->m_card->m_skills_on_attacked)
         {
-            _DEBUG_MSG("Evaluating %s skill %s\n", status_description(def_status).c_str(), skill_description(fd, oa_skill).c_str());
+//            _DEBUG_MSG("Evaluating %s skill %s\n", status_description(def_status).c_str(), skill_description(fd, oa_skill).c_str());
             fd->skill_queue.emplace_back(def_status, def_status->m_augmented > 0 ? augmented_skill(def_status, oa_skill) : oa_skill);
             resolve_skill(fd);
             if(fd->end) { break; }
@@ -1383,7 +1386,7 @@ void PerformAttack::on_kill<CardType::assault>()
     {
         for(auto& on_kill_skill: att_status->m_card->m_skills_on_kill)
         {
-            _DEBUG_MSG("Evaluating %s skill %s\n", status_description(att_status).c_str(), skill_description(fd, on_kill_skill).c_str());
+//            _DEBUG_MSG("Evaluating %s skill %s\n", status_description(att_status).c_str(), skill_description(fd, on_kill_skill).c_str());
             fd->skill_queue.emplace_back(att_status, on_kill_skill);
             resolve_skill(fd);
             if(fd->end) { break; }
@@ -1419,24 +1422,23 @@ void PerformAttack::crush_leech<CardType::assault>()
 }
 
 // General attack phase by the currently evaluated assault, taking into accounts exotic stuff such as flurry,swipe,etc.
-void attack_commander(Field* fd, CardStatus* att_status, unsigned pre_modifier_dmg)
+void attack_commander(Field* fd, CardStatus* att_status)
 {
     CardStatus* def_status{select_first_enemy_wall(fd)}; // defending wall
     if(def_status != nullptr)
     {
-        PerformAttack{fd, att_status, def_status}.op<CardType::structure>(pre_modifier_dmg);
+        PerformAttack{fd, att_status, def_status}.op<CardType::structure>();
     }
     else
     {
-        PerformAttack{fd, att_status, &fd->tip->commander}.op<CardType::commander>(pre_modifier_dmg);
+        PerformAttack{fd, att_status, &fd->tip->commander}.op<CardType::commander>();
     }
 }
 void attack_phase(Field* fd)
 {
     CardStatus* att_status(&fd->tap->assaults[fd->current_ci]); // attacking card
     Storage<CardStatus>& def_assaults(fd->tip->assaults);
-    unsigned pre_modifier_dmg = attack_power(att_status);
-    if(pre_modifier_dmg == 0) { return; }
+    if(attack_power(att_status) == 0) { return; }
     unsigned num_attacks(1);
     if(att_status->m_card->m_flurry > 0 && skill_check<flurry>(fd, att_status, nullptr))
     {
@@ -1458,7 +1460,7 @@ void attack_phase(Field* fd)
             // attack mode 1.
             if(!(att_status->m_card->m_swipe && skill_check<swipe>(fd, att_status, nullptr) && count_achievement<swipe>(fd, att_status)))
             {
-                PerformAttack{fd, att_status, &fd->tip->assaults[fd->current_ci]}.op<CardType::assault>(pre_modifier_dmg);
+                PerformAttack{fd, att_status, &fd->tip->assaults[fd->current_ci]}.op<CardType::assault>();
             }
             // attack mode 2.
             else
@@ -1468,32 +1470,32 @@ void attack_phase(Field* fd)
                 // attack the card on the left
                 if(fd->current_ci > 0 && alive_assault(def_assaults, fd->current_ci - 1))
                 {
-                    PerformAttack{fd, att_status, &fd->tip->assaults[fd->current_ci-1]}.op<CardType::assault>(pre_modifier_dmg);
+                    PerformAttack{fd, att_status, &fd->tip->assaults[fd->current_ci-1]}.op<CardType::assault>();
                 }
                 if(fd->end)
                 { return; }
                 // stille alive? attack the card in front
                 if(can_attack(fd, att_status) && alive_assault(def_assaults, fd->current_ci))
                 {
-                    PerformAttack{fd, att_status, &fd->tip->assaults[fd->current_ci]}.op<CardType::assault>(pre_modifier_dmg);
+                    PerformAttack{fd, att_status, &fd->tip->assaults[fd->current_ci]}.op<CardType::assault>();
                 }
                 else
                 {
-                    attack_commander(fd, att_status, pre_modifier_dmg);
+                    attack_commander(fd, att_status);
                 }
                 if(fd->end)
                 { return; }
                 // still alive? attack the card on the right
                 if(!fd->end && can_attack(fd, att_status) && alive_assault(def_assaults, fd->current_ci + 1))
                 {
-                    PerformAttack{fd, att_status, &fd->tip->assaults[fd->current_ci+1]}.op<CardType::assault>(pre_modifier_dmg);
+                    PerformAttack{fd, att_status, &fd->tip->assaults[fd->current_ci+1]}.op<CardType::assault>();
                 }
             }
         }
         // attack mode 3.
         else
         {
-            attack_commander(fd, att_status, pre_modifier_dmg);
+            attack_commander(fd, att_status);
         }
     }
 }
@@ -2212,7 +2214,7 @@ void perform_mimic(Field* fd, CardStatus* src_status, const SkillSpec& s)
     {
         return; 
     }
-    CardStatus* c(fd->selection_array[get_target_hostile_index(fd, src_status, selection_array_size)]);
+    CardStatus* c(fd->selection_array[fd->effect == Effect::copycat ? fd->rand(0, selection_array_size - 1) : get_target_hostile_index(fd, src_status, selection_array_size)]);
     // evade check for mimic
     // individual skills are subject to evade checks too,
     // but resolve_skill will handle those.
@@ -2232,7 +2234,7 @@ void perform_mimic(Field* fd, CardStatus* src_status, const SkillSpec& s)
                 (std::get<0>(skill) == supply && src_status->m_card->m_type != CardType::assault))
         { continue; }
         SkillSpec mimic_s(std::get<0>(skill), std::get<1>(skill), allfactions, std::get<3>(skill), on_act);
-        _DEBUG_MSG("Evaluating mimiced %s skill %s\n", status_description(c).c_str(), skill_description(fd, skill).c_str());
+//        _DEBUG_MSG("Evaluating mimiced %s skill %s\n", status_description(c).c_str(), skill_description(fd, skill).c_str());
         fd->skill_queue.emplace_back(src_status, src_status->m_augmented > 0 ? augmented_skill(src_status, mimic_s) : mimic_s);
         resolve_skill(fd);
         if(fd->end) { break; }
