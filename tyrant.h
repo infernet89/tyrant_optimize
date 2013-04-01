@@ -1,7 +1,7 @@
 #ifndef TYRANT_H_INCLUDED
 #define TYRANT_H_INCLUDED
 
-#define TYRANT_OPTIMIZER_VERSION "1.0.6"
+#define TYRANT_OPTIMIZER_VERSION "1.0.7"
 
 #include <string>
 #include <set>
@@ -44,16 +44,18 @@ enum Skill
 extern std::string skill_names[num_skills];
 extern std::set<Skill> helpful_skills;
 
-enum SkillActivationModifier
+namespace SkillMod {
+enum SkillMod
 {
-    on_act,
+    on_activate,
     on_play,
     on_attacked,
     on_kill,
     on_death,
     num_skill_activation_modifiers
 };
-extern std::string skill_activation_modifier_names[num_skill_activation_modifiers];
+}
+extern std::string skill_activation_modifier_names[SkillMod::num_skill_activation_modifiers];
 
 namespace CardType {
 enum CardType {
@@ -148,6 +150,6 @@ enum SkillSourceType
     source_chaos
 };
 
-typedef std::tuple<Skill, unsigned, Faction, bool /* all */, SkillActivationModifier> SkillSpec;
+typedef std::tuple<Skill, unsigned, Faction, bool /* all */, SkillMod::SkillMod> SkillSpec;
 
 #endif
