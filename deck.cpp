@@ -248,7 +248,9 @@ std::string Deck::short_description() const
     return ios.str();
 }
 
-std::string Deck::long_description() const
+extern std::string card_description(const Cards& cards, const Card* c);
+
+std::string Deck::long_description(const Cards& all_cards) const 
 {
     std::stringstream ios;
     ios << short_description() << std::endl;
@@ -258,7 +260,7 @@ std::string Deck::long_description() const
     }
     if(commander)
     {
-        ios << commander->m_name << "\n";
+        ios << card_description(all_cards, commander) << "\n"; 
     }
     else
     {
@@ -270,14 +272,14 @@ std::string Deck::long_description() const
     }
     for(const Card* card: cards)
     {
-        ios << "  " << card->m_name << std::endl;
+        ios << "  " << card_description(all_cards, card) << "\n";
     }
     for(auto& pool: raid_cards)
     {
         ios << pool.first << " from:\n";
         for(auto& card: pool.second)
         {
-            ios << "  " << card->m_name << "\n";
+            ios << "  " << card_description(all_cards, card) << "\n"; 
         }
     }
     return ios.str();
