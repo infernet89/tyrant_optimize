@@ -1,7 +1,7 @@
 #ifndef TYRANT_H_INCLUDED
 #define TYRANT_H_INCLUDED
 
-#define TYRANT_OPTIMIZER_VERSION "1.0.9"
+#define TYRANT_OPTIMIZER_VERSION "1.0.12"
 
 #include <string>
 #include <set>
@@ -25,8 +25,7 @@ enum Skill
     attack,
     // Activation (including Destroyed):
     augment, backfire, chaos, cleanse, enfeeble, freeze, heal, infuse, jam,
-    mimic, protect, rally, recharge, repair, rush, shock, siege, strike, summon, supply,
-    temporary_split, // not actually a skill; handles Clone Project/Experiment
+    mimic, protect, rally, recharge, repair, rush, shock, siege, split, strike, summon, supply,
     trigger_regen, // not actually a skill; handles regeneration after strike/siege
     weaken, 
     // Combat-Modifier:
