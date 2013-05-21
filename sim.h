@@ -2,6 +2,7 @@
 #define SIM_H_INCLUDED
 
 #include <boost/pool/pool.hpp>
+#include <string>
 #include <array>
 #include <deque>
 #include <tuple>
@@ -15,8 +16,10 @@ class Deck;
 class Field;
 class Achievement;
 
-extern bool debug_print;
+extern unsigned debug_print;
+extern unsigned debug_cached;
 extern bool debug_line;
+extern std::string debug_str;
 extern unsigned turn_limit;
 
 //---------------------- Represent Simulation Results ----------------------------
@@ -135,6 +138,7 @@ struct CardStatus
     unsigned m_protected;
     unsigned m_rallied;
     unsigned m_stunned;
+    bool m_sundered;
     unsigned m_weakened;
     bool m_temporary_split;
     bool m_is_summoned; // is this card summoned (or split)?
@@ -183,7 +187,7 @@ public:
     unsigned tipi; // and inactive
     Hand* tap;
     Hand* tip;
-    std::array<CardStatus*, 256> selection_array;
+    std::vector<CardStatus*> selection_array;
     unsigned turn;
     gamemode_t gamemode;
     const enum Effect effect;
@@ -236,11 +240,15 @@ public:
     }
 
     template <typename T>
-    inline T& random_in_vector(std::vector<T>& v)
+    inline T random_in_vector(const std::vector<T>& v)
     {
         assert(v.size() > 0);
         return(v[this->rand(0, v.size() - 1)]);
     }
+
+    template <typename CardsIter, typename Functor>
+    inline unsigned make_selection_array(CardsIter first, CardsIter last, Functor f);
+    inline void print_selection_array();
 
     template <class T>
     inline void set_counter(T& container, unsigned key, unsigned value)

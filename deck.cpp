@@ -2,6 +2,7 @@
 
 #include <boost/range/algorithm_ext/insert.hpp>
 #include <boost/tokenizer.hpp>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 
@@ -29,12 +30,16 @@ void partial_shuffle(RandomAccessIterator first, RandomAccessIterator middle,
 }
 
 //------------------------------------------------------------------------------
-std::string deck_hash(const Card* commander, const std::vector<const Card*>& cards)
+std::string deck_hash(const Card* commander, std::vector<const Card*> cards, bool is_ordered)
 {
     std::string base64= "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::stringstream ios;
     ios << base64[commander->m_id / 64];
     ios << base64[commander->m_id % 64];
+    if(!is_ordered)
+    {
+        std::sort(cards.begin(), cards.end(), [](const Card* a, const Card* b) { return a->m_id < b->m_id; });
+    }
     unsigned last_id = 0;
     unsigned num_repeat = 0;
     for(const Card* card: cards)
@@ -239,7 +244,7 @@ std::string Deck::short_description() const
     if(!name.empty()) { ios << " \"" << name << "\""; }
     if(deck_string.empty())
     {
-        if(raid_cards.empty()) { ios << ": " << deck_hash(commander, cards); }
+        if(raid_cards.empty()) { ios << ": " << deck_hash(commander, cards, strategy == DeckStrategy::ordered || strategy == DeckStrategy::exact_ordered); }
     }
     else
     {
@@ -250,7 +255,7 @@ std::string Deck::short_description() const
 
 extern std::string card_description(const Cards& cards, const Card* c);
 
-std::string Deck::long_description(const Cards& all_cards) const 
+std::string Deck::long_description(const Cards& all_cards) const
 {
     std::stringstream ios;
     ios << short_description() << std::endl;
@@ -260,7 +265,7 @@ std::string Deck::long_description(const Cards& all_cards) const
     }
     if(commander)
     {
-        ios << card_description(all_cards, commander) << "\n"; 
+        ios << card_description(all_cards, commander) << "\n";
     }
     else
     {
@@ -279,7 +284,7 @@ std::string Deck::long_description(const Cards& all_cards) const
         ios << pool.first << " from:\n";
         for(auto& card: pool.second)
         {
-            ios << "  " << card_description(all_cards, card) << "\n"; 
+            ios << "  " << card_description(all_cards, card) << "\n";
         }
     }
     return ios.str();
@@ -302,7 +307,7 @@ const Card* Deck::next()
     {
         return(nullptr);
     }
-    else if(strategy == DeckStrategy::random || strategy == DeckStrategy::exact_ordered) 
+    else if(strategy == DeckStrategy::random || strategy == DeckStrategy::exact_ordered)
     {
         const Card* card = shuffled_cards.front();
         shuffled_cards.pop_front();
@@ -367,13 +372,12 @@ void Deck::shuffle(std::mt19937& re)
         {
             order[card->m_id].push_back(i);
             ++i;
-        } 
+        }
     }
-	if(strategy != DeckStrategy::exact_ordered)
+    if(strategy != DeckStrategy::exact_ordered)
     {
         std::shuffle(shuffled_cards.begin(), shuffled_cards.end(), re);
-    } 
-    
+    }
 }
 
 void Deck::place_at_bottom(const Card* card)

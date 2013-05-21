@@ -7,11 +7,11 @@
 #include <random>
 #include <vector>
 #include "tyrant.h"
+#include "card.h"
 
-class Card;
 class Cards;
 
-std::string deck_hash(const Card* commander, const std::vector<const Card*>& cards);
+std::string deck_hash(const Card* commander, std::vector<const Card*> cards, bool is_ordered);
 
 //---------------------- $30 Deck: a commander + a sequence of cards -----------
 // Can be shuffled.
@@ -23,7 +23,7 @@ enum DeckStrategy
 {
     random,
     ordered,
-	exact_ordered,
+    exact_ordered,
     num_deckstrategies
 };
 }
@@ -78,9 +78,21 @@ struct Deck
     void set(const Cards& all_cards, const std::string& deck_string_);
     void resolve(const Cards& all_cards);
 
+    template<class Container>
+    Container card_ids() const
+    {
+        Container results;
+        results.insert(results.end(), commander->m_id);
+        for(auto card: cards)
+        {
+            results.insert(results.end(), card->m_id);
+        }
+        return(results);
+    }
+
     Deck* clone() const;
     std::string short_description() const;
-    std::string long_description(const Cards& all_cards) const; 
+    std::string long_description(const Cards& all_cards) const;
     const Card* get_commander();
     const Card* next();
     void shuffle(std::mt19937& re);

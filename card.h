@@ -47,14 +47,15 @@ public:
         m_siphon(0),
         m_split(false),
         m_stun(false),
+        m_sunder(false),
+        m_sunder_oa(false),
         m_swipe(false),
         m_tribute(false),
         m_unique(false),
         m_valor(0),
         m_wall(false),
         m_skills(),
-        m_type(CardType::assault),
-		m_bad(false)
+        m_type(CardType::assault)
     {
     }
 
@@ -107,6 +108,8 @@ public:
     unsigned m_siphon;
     bool m_split;
     bool m_stun;
+    bool m_sunder;
+    bool m_sunder_oa;
     bool m_swipe;
     bool m_tribute;
     bool m_unique;
@@ -118,7 +121,6 @@ public:
     std::vector<SkillSpec> m_skills_on_attacked;
     std::vector<SkillSpec> m_skills_on_kill;
     CardType::CardType m_type;
-	bool m_bad;
 };
 
 #endif
