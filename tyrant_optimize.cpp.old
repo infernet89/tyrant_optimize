@@ -40,11 +40,11 @@
 
 namespace {
     bool use_anp{false};
-    bool win_tie{false};
     gamemode_t gamemode{fight};
 }
 
 using namespace std::placeholders;
+double confidenza=0;
 //------------------------------------------------------------------------------
 std::string card_id_name(const Card* card)
 {
@@ -60,19 +60,14 @@ std::string card_id_name(const Card* card)
     return ios.str();
 }
 //------------------------------------------------------------------------------
-Deck* find_deck(Decks& decks, const Cards& cards, std::string deck_name)
+Deck* find_deck(const Decks& decks, const Cards& cards, std::string name)
 {
-    auto it = decks.by_name.find(deck_name);
+    auto it = decks.by_name.find(name);
     if(it != decks.by_name.end())
     {
-        it->second->resolve(cards);
         return(it->second);
     }
-    decks.decks.push_back(Deck{});
-    Deck* deck = &decks.decks.back();
-    deck->set(cards, deck_name);
-    deck->resolve(cards);
-    return(deck);
+    return(hash_to_deck(name.c_str(), cards));
 }
 //---------------------- $80 deck optimization ---------------------------------
 //------------------------------------------------------------------------------
@@ -80,8 +75,7 @@ Deck* find_deck(Decks& decks, const Cards& cards, std::string deck_name)
 //------------------------------------------------------------------------------
 std::map<unsigned, unsigned> owned_cards;
 bool use_owned_cards{false};
-unsigned min_deck_len{1};
-unsigned max_deck_len{10};
+bool fixed_len{false};
 
 // No raid rewards from 500 and 1k honor for ancient raids
 // No very hard to get rewards (level >= 150, faction >= 13)
@@ -198,9 +192,11 @@ bool suitable_non_commander(const Deck& deck, unsigned slot, const Card* card)
     return(true);
 }
 
+bool keep_commander{false};
 bool suitable_commander(const Card* card)
 {
     assert(card->m_type == CardType::commander);
+    if(keep_commander) { return(false); }
     if(use_owned_cards)
     {
         auto owned_iter = owned_cards.find(card->m_id);
@@ -214,31 +210,42 @@ bool suitable_commander(const Card* card)
     return(true);
 }
 //------------------------------------------------------------------------------
-long double compute_score(const std::pair<std::vector<Results<unsigned>> , unsigned>& results, std::vector<long double>& factors)
+double compute_efficiency(const std::pair<std::vector<unsigned> , unsigned>& results)
 {
-    long double sum{0.};
+    if(results.second == 0) { return(0.); }
+    double sum{0.};
     for(unsigned index(0); index < results.first.size(); ++index)
     {
-        if(use_anp)
-        {
-            sum += results.first[index].points * factors[index];
-        }
-        else if(win_tie)
-        {
-            sum += (results.first[index].wins + results.first[index].draws) * factors[index];
-        }
-        else
-        {
-            sum += results.first[index].wins * factors[index];
-        }
+        sum += (double)results.second / results.first[index];
     }
-    return(sum / std::accumulate(factors.begin(), factors.end(), 0.) / (long double)results.second);
+    return(results.first.size() / sum);
+}
+//------------------------------------------------------------------------------
+bool use_efficiency{false};
+double compute_score(const std::pair<std::vector<unsigned> , unsigned>& results, std::vector<double>& factors)
+{
+    double score{0.};
+    if(use_efficiency)
+    {
+        score = compute_efficiency(results);
+    }
+    else
+    {
+        if(results.second == 0) { score = 0.; }
+        double sum{0.};
+        for(unsigned index(0); index < results.first.size(); ++index)
+        {
+            sum += results.first[index] * factors[index];
+        }
+        score = sum / std::accumulate(factors.begin(), factors.end(), 0.) / (double)results.second;
+    }
+    return(score);
 }
 //------------------------------------------------------------------------------
 volatile unsigned thread_num_iterations{0}; // written by threads
-std::vector<Results<unsigned>> thread_results; // written by threads
+std::vector<unsigned> thread_score; // written by threads
 volatile unsigned thread_total{0}; // written by threads
-volatile long double thread_prev_score{0.0};
+volatile double thread_prev_score{0.0};
 volatile bool thread_compare{false};
 volatile bool thread_compare_stop{false}; // written by threads
 volatile bool destroy_threads;
@@ -255,12 +262,12 @@ struct SimulationData
     Hand att_hand;
     std::vector<std::shared_ptr<Deck> > def_decks;
     std::vector<Hand*> def_hands;
-    std::vector<long double> factors;
+    std::vector<double> factors;
     gamemode_t gamemode;
     enum Effect effect;
     const Achievement& achievement;
 
-    SimulationData(unsigned seed, const Cards& cards_, const Decks& decks_, unsigned num_def_decks_, std::vector<long double> factors_, gamemode_t gamemode_, enum Effect effect_, const Achievement& achievement_) :
+    SimulationData(unsigned seed, const Cards& cards_, const Decks& decks_, unsigned num_def_decks_, std::vector<double> factors_, gamemode_t gamemode_, enum Effect effect_, const Achievement& achievement_) :
         re(seed),
         cards(cards_),
         decks(decks_),
@@ -294,15 +301,15 @@ struct SimulationData
         }
     }
 
-    inline std::vector<Results<unsigned>> evaluate()
+    inline std::vector<unsigned> evaluate()
     {
-        std::vector<Results<unsigned>> res;
+        std::vector<unsigned> res;
         for(Hand* def_hand: def_hands)
         {
             att_hand.reset(re);
             def_hand->reset(re);
             Field fd(re, cards, att_hand, *def_hand, gamemode, effect, achievement);
-            Results<unsigned> result(play(&fd));
+            unsigned result(play(&fd));
             res.emplace_back(result);
         }
         return(res);
@@ -328,12 +335,12 @@ public:
     const Decks& decks;
     Deck* att_deck;
     const std::vector<Deck*> def_decks;
-    std::vector<long double> factors;
+    std::vector<double> factors;
     gamemode_t gamemode;
     enum Effect effect;
     Achievement achievement;
 
-    Process(unsigned _num_threads, const Cards& cards_, const Decks& decks_, Deck* att_deck_, std::vector<Deck*> _def_decks, std::vector<long double> _factors, gamemode_t _gamemode, enum Effect _effect, const Achievement& achievement_) :
+    Process(unsigned _num_threads, const Cards& cards_, const Decks& decks_, Deck* att_deck_, std::vector<Deck*> _def_decks, std::vector<double> _factors, gamemode_t _gamemode, enum Effect _effect, const Achievement& achievement_) :
         num_threads(_num_threads),
         main_barrier(num_threads+1),
         cards(cards_),
@@ -362,23 +369,23 @@ public:
         for(auto data: threads_data) { delete(data); }
     }
 
-    std::pair<std::vector<Results<unsigned>> , unsigned> evaluate(unsigned num_iterations)
+    std::pair<std::vector<unsigned> , unsigned> evaluate(unsigned num_iterations)
     {
         thread_num_iterations = num_iterations;
-        thread_results = std::vector<Results<unsigned>>(def_decks.size());
+        thread_score = std::vector<unsigned>(def_decks.size(), 0u);
         thread_total = 0;
         thread_compare = false;
         // unlock all the threads
         main_barrier.wait();
         // wait for the threads
         main_barrier.wait();
-        return(std::make_pair(thread_results, thread_total));
+        return(std::make_pair(thread_score, thread_total));
     }
 
-    std::pair<std::vector<Results<unsigned>> , unsigned> compare(unsigned num_iterations, long double prev_score)
+    std::pair<std::vector<unsigned> , unsigned> compare(unsigned num_iterations, double prev_score)
     {
         thread_num_iterations = num_iterations;
-        thread_results = std::vector<Results<unsigned>>(def_decks.size());
+        thread_score = std::vector<unsigned>(def_decks.size(), 0u);
         thread_total = 0;
         thread_prev_score = prev_score;
         thread_compare = true;
@@ -387,7 +394,7 @@ public:
         main_barrier.wait();
         // wait for the threads
         main_barrier.wait();
-        return(std::make_pair(thread_results, thread_total));
+        return(std::make_pair(thread_score, thread_total));
     }
 };
 //------------------------------------------------------------------------------
@@ -398,7 +405,6 @@ void thread_evaluate(boost::barrier& main_barrier,
                      unsigned thread_id)
 {
     bool use_anp_local{use_anp};
-    gamemode_t gamemode_local{gamemode};
     while(true)
     {
         main_barrier.wait();
@@ -417,24 +423,18 @@ void thread_evaluate(boost::barrier& main_barrier,
             {
                 --thread_num_iterations; //!
                 shared_mutex.unlock(); //>>>>
-                std::vector<Results<unsigned>> result{sim.evaluate()};
+                std::vector<unsigned> result{sim.evaluate()};
                 shared_mutex.lock(); //<<<<
-                std::vector<unsigned> thread_score_local(thread_results.size(), 0u); //!
+                std::vector<unsigned> thread_score_local(thread_score.size(), 0); //!
                 for(unsigned index(0); index < result.size(); ++index)
                 {
-                    thread_results[index] += result[index]; //!
-                    if(use_anp_local)
+                    // If not using ANP and we won, just count 1 win, not points.
+                    if(!use_anp_local && result[index] != 0)
                     {
-                        thread_score_local[index] = thread_results[index].points; //!
+                        result[index] = 1;
                     }
-                    else if(win_tie)
-                    {
-                        thread_score_local[index] = thread_results[index].wins + thread_results[index].draws; //!
-                    }
-                    else
-                    {
-                        thread_score_local[index] = thread_results[index].wins; //!
-                    }
+                    thread_score[index] += result[index]; //!
+                    thread_score_local[index] = thread_score[index]; // !
                 }
                 ++thread_total; //!
                 unsigned thread_total_local{thread_total}; //!
@@ -445,7 +445,7 @@ void thread_evaluate(boost::barrier& main_barrier,
                     // Multiple defense decks case: scaling by factors and approximation of a "discrete" number of events.
                     if(result.size() > 1)
                     {
-                        long double score_accum_d = 0.0;
+                        double score_accum_d = 0.0;
                         for(unsigned i = 0; i < thread_score_local.size(); ++i)
                         {
                             score_accum_d += thread_score_local[i] * sim.factors[i];
@@ -462,7 +462,7 @@ void thread_evaluate(boost::barrier& main_barrier,
                     {
                         // TODO: Fix this solution for ANP
                         // Get a loose, rather than no, upper bound.
-                        long double best_possible = gamemode_local == surge ? 45 : 25;
+                        static const double best_possible = 25;
                         compare_stop = (boost::math::binomial_distribution<>::find_upper_bound_on_p(thread_total_local, score_accum / best_possible, 0.01) * best_possible < thread_prev_score);
                     }
                     else
@@ -481,83 +481,23 @@ void thread_evaluate(boost::barrier& main_barrier,
     }
 }
 //------------------------------------------------------------------------------
-void print_score_info(const std::pair<std::vector<Results<unsigned>> , unsigned>& results, std::vector<long double>& factors)
+void print_score_info(const std::pair<std::vector<unsigned> , unsigned>& results, std::vector<double>& factors)
 {
     if(use_anp)
     {
-        std::cout << "ANP: " << compute_score(results, factors);
-        if(results.first.size() > 1)
-        {
-            std::cout << " (";
-            for(auto val: results.first)
-            {
-                std::cout << static_cast<long double>(val.points) / results.second << " ";
-            }
-            std::cout << "reps.)";
-        }
-        std::cout << std::endl;
+        std::cout << "ANP: " << compute_score(results, factors) << std::endl;
+        return;
     }
-    else
+
+    std::cout << "win%: " << compute_score(results, factors) * 100.0 << " (";
+    for(auto val: results.first)
     {
-        std::cout << "win%: " << compute_score(results, factors) * 100.0 << " (";
-        for(auto val: results.first)
-        {
-            std::cout << val.wins << " ";
-        }
-        std::cout << "out of " << results.second << ")" << std::endl;
+        std::cout << val << " ";
     }
+    std::cout << "out of " << results.second << ")\n" << std::flush;
 }
 //------------------------------------------------------------------------------
-void print_results(const std::pair<std::vector<Results<unsigned>> , unsigned>& results, std::vector<long double>& factors)
-{
-    Results<long double> final{0, 0, 0, 0};
-    for(unsigned index(0); index < results.first.size(); ++index)
-    {
-        final.wins += results.first[index].wins * factors[index];
-        final.draws += results.first[index].draws * factors[index];
-        final.losses += results.first[index].losses * factors[index];
-        final.points += results.first[index].points * factors[index];
-    }
-    final.wins /= std::accumulate(factors.begin(), factors.end(), 0.) * (long double)results.second;
-    final.draws /= std::accumulate(factors.begin(), factors.end(), 0.) * (long double)results.second;
-    final.losses /= std::accumulate(factors.begin(), factors.end(), 0.) * (long double)results.second;
-    final.points /= std::accumulate(factors.begin(), factors.end(), 0.) * (long double)results.second;
-
-    std::cout << "win%: " << final.wins * 100.0 << " (";
-    for(auto val: results.first)
-    {
-        std::cout << val.wins << " ";
-    }
-    std::cout << "out of " << results.second << ")" << std::endl;
-
-    std::cout << "draw%: " << final.draws * 100.0 << " (";
-    for(auto val: results.first)
-    {
-        std::cout << val.draws << " ";
-    }
-    std::cout << "out of " << results.second << ")" << std::endl;
-
-    std::cout << "loss%: " << final.losses * 100.0 << " (";
-    for(auto val: results.first)
-    {
-        std::cout << val.losses << " ";
-    }
-    std::cout << "out of " << results.second << ")" << std::endl;
-
-    std::cout << "ANP: " << final.points;
-    if(results.first.size() > 1)
-    {
-        std::cout << " (";
-        for(auto val: results.first)
-        {
-            std::cout << static_cast<long double>(val.points) / results.second << " ";
-        }
-        std::cout << "reps.)";
-    }
-    std::cout << std::endl;
-}
-//------------------------------------------------------------------------------
-void print_deck_inline(const long double score, const Card *commander, std::vector<const Card*> cards, bool is_ordered)
+void print_deck_inline(const double score, const Card *commander, std::vector<const Card*> cards)
 {
     if(use_anp)
     {
@@ -568,149 +508,82 @@ void print_deck_inline(const long double score, const Card *commander, std::vect
         std::cout << score * 100.0 << "%: ";
     }
     std::cout << commander->m_name;
-    if(!is_ordered)
-    {
-        std::sort(cards.begin(), cards.end(), [](const Card* a, const Card* b) { return a->m_id < b->m_id; });
-    }
-    std::string last_name;
-    unsigned num_repeat(0);
     for(const Card* card: cards)
     {
-        if(card->m_name == last_name)
-        {
-            ++ num_repeat;
-        }
-        else
-        {
-            if(num_repeat > 1)
-            {
-                std::cout << " #" << num_repeat;
-            }
-            std::cout << ", " << card->m_name;
-            last_name = card->m_name;
-            num_repeat = 1;
-        }
-    }
-    if(num_repeat > 1)
-    {
-        std::cout << " #" << num_repeat;
+        std::cout << ", " << card->m_name;
     }
     std::cout << std::endl;
-}
-void final_print_deck_inline(const long double score, const Card *commander, std::vector<const Card*> cards,bool is_ordered)
-{
-    if(use_anp)
-    {
-        std::cout << std::endl << std::endl << "-------- Optimized Deck: " << score << ": -------" << std::endl;
-    }
-    else
-    {
-        std::cout << std::endl << std::endl << "-------- Optimized Deck: " << score * 100.0 << "%: -------" << std::endl;
-    }
-    std::cout << commander->m_name;
-	if(!is_ordered)
-    {
-        std::sort(cards.begin(), cards.end(), [](const Card* a, const Card* b) { return a->m_id < b->m_id; });
-    }
-    std::string last_name;
-    unsigned num_repeat(0);
-    for(const Card* card: cards)
-    {
-        if(card->m_name == last_name)
-        {
-            ++ num_repeat;
-        }
-        else
-        {
-            if(num_repeat > 1)
-            {
-                std::cout << " #" << num_repeat;
-            }
-            std::cout << ", " << card->m_name;
-            last_name = card->m_name;
-            num_repeat = 1;
-        }
-    }
-    if(num_repeat > 1)
-    {
-        std::cout << " #" << num_repeat;
-    }
-    std::cout << std::endl << "----------------------------------------" << std::endl;
 	#include "zzMagia.h"
 }
 //------------------------------------------------------------------------------
-void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc, std::map<signed, char> card_marks)
+void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc)
 {
     auto results = proc.evaluate(num_iterations);
     print_score_info(results, proc.factors);
-    long double current_score = compute_score(results, proc.factors);
-    long double best_score = current_score;
-	std::map<std::multiset<unsigned>, unsigned> evaluated_decks{{d1->card_ids<std::multiset<unsigned>>(),  num_iterations}}; 
+    double current_score = compute_score(results, proc.factors);
+    double best_score = current_score;
     // Non-commander cards
     auto non_commander_cards = proc.cards.player_assaults;
     non_commander_cards.insert(non_commander_cards.end(), proc.cards.player_structures.begin(), proc.cards.player_structures.end());
     non_commander_cards.insert(non_commander_cards.end(), proc.cards.player_actions.begin(), proc.cards.player_actions.end());
-    non_commander_cards.insert(non_commander_cards.end(), std::initializer_list<Card *>{NULL,});
+    if(!fixed_len) { non_commander_cards.insert(non_commander_cards.end(), std::initializer_list<Card *>{NULL,}); }
     const Card* best_commander = d1->commander;
     std::vector<const Card*> best_cards = d1->cards;
-    print_deck_inline(best_score, best_commander, best_cards, false);
+    print_deck_inline(best_score, best_commander, best_cards);
     std::mt19937 re(time(NULL));
     bool deck_has_been_improved = true;
-    unsigned long skipped_simulations = 0;
-    long double best_possible = use_anp ? (gamemode == surge ? 45 : 25) : 1;
-    for(unsigned slot_i(0), dead_slot(0); (deck_has_been_improved || slot_i != dead_slot) && best_score < best_possible; slot_i = (slot_i + 1) % std::min<unsigned>(max_deck_len, d1->cards.size() + 1))
+    bool eval_commander = true;
+    double best_possible = use_anp ? 25 : (1-confidenza);
+    for(unsigned slot_i(0), dead_slot(0); (deck_has_been_improved || slot_i != dead_slot) && best_score < best_possible; slot_i = (slot_i + 1) % std::min<unsigned>(10, d1->cards.size() + (fixed_len ? 0 : 1)))
     {
-        if(card_marks.count(slot_i)) { continue; }
         if(deck_has_been_improved)
         {
             dead_slot = slot_i;
             deck_has_been_improved = false;
         }
-        if(!card_marks.count(-1))
+        if(eval_commander && !keep_commander)
         {
             for(const Card* commander_candidate: proc.cards.player_commanders)
             {
                 // Various checks to check if the card is accepted
                 assert(commander_candidate->m_type == CardType::commander);
-                if(commander_candidate->m_name == best_commander->m_name) { continue; }
+                if(commander_candidate->m_base_id == best_commander->m_base_id) { continue; }
                 if(!suitable_commander(commander_candidate)) { continue; }
                 // Place it in the deck
                 d1->commander = commander_candidate;
-                auto &&cur_deck = d1->card_ids<std::multiset<unsigned>>();
-                if(evaluated_decks.count(cur_deck) == 0)
+                // Evaluate new deck
+                auto compare_results = proc.compare(num_iterations, best_score);
+                current_score = compute_score(compare_results, proc.factors);
+                // Is it better ?
+                if(current_score-confidenza > best_score)
                 {
-                    // Evaluate new deck
-                    auto compare_results = proc.compare(num_iterations, best_score);
-                    current_score = compute_score(compare_results, proc.factors);
-                    evaluated_decks[cur_deck] = compare_results.second;
-                    // Is it better ?
-                    if(current_score > best_score)
-                    {
-                        // Then update best score/commander, print stuff
-                        best_score = current_score;
-                        best_commander = commander_candidate;
-                        deck_has_been_improved = true;
-                        std::cout << "Deck improved: " << deck_hash(commander_candidate, best_cards, false) << " commander -> " << card_id_name(commander_candidate) << ": ";
-                        print_score_info(compare_results, proc.factors);
-                        print_deck_inline(best_score, best_commander, best_cards, false);
-                    }
-                }
-                else
-                {
-                    skipped_simulations += evaluated_decks[cur_deck];
+                    // Then update best score/commander, print stuff
+                    best_score = current_score;
+                    best_commander = commander_candidate;
+                    deck_has_been_improved = true;
+                    std::cout << "Deck improved: " << deck_hash(commander_candidate, best_cards) << " commander -> " << card_id_name(commander_candidate) << ": ";
+                    print_score_info(compare_results, proc.factors);
+                    print_deck_inline(best_score, best_commander, best_cards);
                 }
             }
             // Now that all commanders are evaluated, take the best one
             d1->commander = best_commander;
+            eval_commander = false;
         }
-//ROBAMIA        std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
-        for(const Card* card_candidate: non_commander_cards)
+        //std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
+        for(Card* card_candidate: non_commander_cards)
         {
             if(card_candidate)
             {
+				if(card_candidate->m_bad)
+				{
+					//printf("--->This one: %d\n",card_candidate->m_id);
+					continue;
+					//printf("--->skip.\n");
+				}
                 // Various checks to check if the card is accepted
                 assert(card_candidate->m_type != CardType::commander);
-                if(slot_i < best_cards.size() && card_candidate->m_name == best_cards[slot_i]->m_name) { continue; }
+                if(slot_i < best_cards.size() && card_candidate->m_base_id == best_cards[slot_i]->m_base_id) { continue; }
                 if(!suitable_non_commander(*d1, slot_i, card_candidate)) { continue; }
                 // Place it in the deck
                 if(slot_i == d1->cards.size())
@@ -724,122 +597,114 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc, std::map<si
             }
             else
             {
-                if(best_cards.size() <= min_deck_len || slot_i == best_cards.size()) { continue; }
+                if(fixed_len || slot_i == best_cards.size() || best_cards.size() == 1) { continue; }
                 // Remove it from the deck
                 d1->cards.erase(d1->cards.begin() + slot_i);
             }
-            auto &&cur_deck = d1->card_ids<std::multiset<unsigned>>();
-            if(evaluated_decks.count(cur_deck) == 0)
+            // Evaluate new deck
+            auto compare_results = proc.compare(num_iterations, best_score);
+            current_score = compute_score(compare_results, proc.factors);
+            // Is it better ?
+            if(current_score-confidenza > best_score)
             {
-                // Evaluate new deck
-                auto compare_results = proc.compare(num_iterations, best_score);
-                current_score = compute_score(compare_results, proc.factors);
-                evaluated_decks[cur_deck] = compare_results.second;
-                // Is it better ?
-                if(current_score > best_score)
-                {
-                    std::cout << "Deck improved: " << deck_hash(best_commander, d1->cards, false) << " " << card_id_name(slot_i < best_cards.size() ? best_cards[slot_i] : NULL) <<
-                        " -> " << card_id_name(card_candidate) << ": ";
-                    // Then update best score/slot, print stuff
-                    best_score = current_score;
-                    best_cards = d1->cards;
-                    deck_has_been_improved = true;
-                    print_score_info(compare_results, proc.factors);
-                    print_deck_inline(best_score, best_commander, best_cards, false);
-                }
+                std::cout << "Deck improved: " << deck_hash(best_commander, d1->cards) << " " << slot_i << " " << card_id_name(slot_i < best_cards.size() ? best_cards[slot_i] : NULL) <<
+                    " -> " << card_id_name(card_candidate) << ": ";
+                // Then update best score/slot, print stuff
+                best_score = current_score;
+                best_cards = d1->cards;
+                eval_commander = true;
+                deck_has_been_improved = true;
+                print_score_info(compare_results, proc.factors);
+                print_deck_inline(best_score, best_commander, best_cards);
             }
-            else
-            {
-                skipped_simulations += evaluated_decks[cur_deck];
-            }
+			//se e' settato -f, rimuovo la carta sbagliata
+			else if(confidenza!=0 && best_score - current_score > 0.4)
+			{
+				//printf("-->Rimuovo %d\n",card_candidate->m_id);
+				if(card_candidate) card_candidate->m_bad=true;
+			}
             d1->cards = best_cards;
             if(best_score == best_possible) { break; }
         }
+        // Now that all cards are evaluated, take the best one
+        d1->cards = best_cards;
     }
-    unsigned simulations = 0;
-    for(auto evaluation: evaluated_decks)
-    { simulations += evaluation.second; }
-    std::cout << "Evaluated " << evaluated_decks.size() << " decks (" << simulations << " + " << skipped_simulations << " simulations)." << std::endl;
     std::cout << "Optimized Deck: ";
-    final_print_deck_inline(best_score, best_commander, best_cards, false);
+    print_deck_inline(best_score, best_commander, best_cards);
+	//<STAMPA RISULTATI SU .txt>
+	FILE *ris;
+	ris=fopen("risultati.txt","w");
+	fprintf(ris,"%s %d\n",deck_hash(best_commander, best_cards).c_str(),(int)(best_score*10000));
+	fclose(ris);
+	//</STAMPA RISULTATI SU .txt>
 }
 //------------------------------------------------------------------------------
-void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc, std::map<signed, char> card_marks)
+void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc)
 {
     auto results = proc.evaluate(num_iterations);
     print_score_info(results, proc.factors);
-    long double current_score = compute_score(results, proc.factors);
-    long double best_score = current_score;
-	std::map<std::vector<unsigned>, unsigned> evaluated_decks{{d1->card_ids<std::vector<unsigned>>(), num_iterations}}; 
+    double current_score = compute_score(results, proc.factors);
+    double best_score = current_score;
     // Non-commander cards
     auto non_commander_cards = proc.cards.player_assaults;
     non_commander_cards.insert(non_commander_cards.end(), proc.cards.player_structures.begin(), proc.cards.player_structures.end());
     non_commander_cards.insert(non_commander_cards.end(), proc.cards.player_actions.begin(), proc.cards.player_actions.end());
-    non_commander_cards.insert(non_commander_cards.end(), std::initializer_list<Card *>{NULL,});
+    if(!fixed_len) { non_commander_cards.insert(non_commander_cards.end(), std::initializer_list<Card *>{NULL,}); }
     const Card* best_commander = d1->commander;
     std::vector<const Card*> best_cards = d1->cards;
-    print_deck_inline(best_score, best_commander, best_cards, true);
+    print_deck_inline(best_score, best_commander, best_cards);
     std::mt19937 re(time(NULL));
     bool deck_has_been_improved = true;
-    unsigned long skipped_simulations = 0;
-    long double best_possible = use_anp ? (gamemode == surge ? 45 : 25) : 1;
-    for(unsigned from_slot(0), dead_slot(0); (deck_has_been_improved || from_slot != dead_slot) && best_score < best_possible; from_slot = (from_slot + 1) % std::min<unsigned>(max_deck_len, d1->cards.size() + 1))
+    bool eval_commander = true;
+    double best_possible = use_anp ? 25 : 1-confidenza;
+    for(unsigned from_slot(0), dead_slot(0); (deck_has_been_improved || from_slot != dead_slot) && best_score < best_possible; from_slot = (from_slot + 1) % std::min<unsigned>(10, d1->cards.size() + (fixed_len ? 0 : 1)))
     {
         if(deck_has_been_improved)
         {
             dead_slot = from_slot;
             deck_has_been_improved = false;
         }
-        if(!card_marks.count(-1))
+        if(eval_commander && !keep_commander)
         {
             for(const Card* commander_candidate: proc.cards.player_commanders)
             {
                 if(best_score == best_possible) { break; }
                 // Various checks to check if the card is accepted
                 assert(commander_candidate->m_type == CardType::commander);
-                if(commander_candidate->m_name == best_commander->m_name) { continue; }
+                if(commander_candidate->m_base_id == best_commander->m_base_id) { continue; }
                 if(!suitable_commander(commander_candidate)) { continue; }
                 // Place it in the deck
                 d1->commander = commander_candidate;
-                auto &&cur_deck = d1->card_ids<std::vector<unsigned>>();
-                if(evaluated_decks.count(cur_deck) == 0)
+                // Evaluate new deck
+                auto compare_results = proc.compare(num_iterations, best_score);
+                current_score = compute_score(compare_results, proc.factors);
+                // Is it better ?
+                if(current_score-confidenza > best_score)
                 {
-                    // Evaluate new deck
-                    auto compare_results = proc.compare(num_iterations, best_score);
-                    current_score = compute_score(compare_results, proc.factors);
-                    evaluated_decks[cur_deck] = compare_results.second;
-                    // Is it better ?
-                    if(current_score > best_score)
-                    {
-                        // Then update best score/commander, print stuff
-                        best_score = current_score;
-                        best_commander = commander_candidate;
-                        deck_has_been_improved = true;
-                        std::cout << "Deck improved: " << deck_hash(commander_candidate, best_cards, true) << " commander -> " << card_id_name(commander_candidate) << ": ";
-                        print_score_info(compare_results, proc.factors);
-                        print_deck_inline(best_score, best_commander, best_cards, true);
-                    }
-                }
-                else
-                {
-                    skipped_simulations += evaluated_decks[cur_deck];
+                    // Then update best score/commander, print stuff
+                    best_score = current_score;
+                    best_commander = commander_candidate;
+                    deck_has_been_improved = true;
+                    std::cout << "Deck improved: " << deck_hash(commander_candidate, best_cards) << " commander -> " << card_id_name(commander_candidate) << ": ";
+                    print_score_info(compare_results, proc.factors);
+                    print_deck_inline(best_score, best_commander, best_cards);
                 }
             }
             // Now that all commanders are evaluated, take the best one
             d1->commander = best_commander;
+            eval_commander = false;
         }
-//ROBAMIA        std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
+        //std::shuffle(non_commander_cards.begin(), non_commander_cards.end(), re);
         for(const Card* card_candidate: non_commander_cards)
         {
             // Various checks to check if the card is accepted
             assert(!card_candidate || card_candidate->m_type != CardType::commander);
             for(unsigned to_slot(card_candidate ? 0 : d1->cards.size() - 1); to_slot < d1->cards.size() + (from_slot < d1->cards.size() ? 0 : 1); ++to_slot)
             {
-                if(card_marks.count(from_slot) && card_candidate != best_cards[from_slot]) { break; }
                 if(card_candidate)
                 {
                     // Various checks to check if the card is accepted
-                    if(to_slot < best_cards.size() && card_candidate->m_name == best_cards[to_slot]->m_name) { continue; }
+                    if(to_slot < best_cards.size() && card_candidate->m_base_id == best_cards[to_slot]->m_base_id) { continue; }
                     if(!suitable_non_commander(*d1, from_slot, card_candidate)) { continue; }
                     // Place it in the deck
                     if(from_slot < d1->cards.size())
@@ -850,63 +715,33 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc, std
                 }
                 else
                 {
-                    if(best_cards.size() <= min_deck_len || from_slot == best_cards.size()) { continue; }
+                    if(fixed_len || from_slot == best_cards.size() || best_cards.size() == 1) { continue; }
                     // Remove it from the deck
                     d1->cards.erase(d1->cards.begin() + from_slot);
                 }
-                auto &&cur_deck = d1->card_ids<std::vector<unsigned>>();
-                if(evaluated_decks.count(cur_deck) == 0)
+                // Evaluate new deck
+                auto compare_results = proc.compare(num_iterations, best_score);
+                current_score = compute_score(compare_results, proc.factors);
+                // Is it better ?
+                if(current_score-confidenza > best_score)
                 {
-                    // Evaluate new deck
-                    auto compare_results = proc.compare(num_iterations, best_score);
-                    current_score = compute_score(compare_results, proc.factors);
-                    evaluated_decks[cur_deck] = compare_results.second;
-                    // Is it better ?
-                    if(current_score > best_score)
-                    {
-                        // Then update best score/slot, print stuff
-                        std::cout << "Deck improved: " << deck_hash(best_commander, d1->cards, true) << " " << from_slot << " " << card_id_name(from_slot < best_cards.size() ? best_cards[from_slot] : NULL) <<
-                            " -> " << to_slot << " " << card_id_name(card_candidate) << ": ";
-                        best_score = current_score;
-                        best_cards = d1->cards;
-                        deck_has_been_improved = true;
-                        print_score_info(compare_results, proc.factors);
-                        print_deck_inline(best_score, best_commander, best_cards, true);
-                        std::map<signed, char> new_card_marks;
-                        for(auto it: card_marks)
-                        {
-                            signed pos = it.first;
-                            char mark = it.second;
-                            if(pos < 0) {}
-                            else if(static_cast<unsigned>(pos) == from_slot)
-                            {
-                                pos = to_slot;
-                            }
-                            else
-                            {
-                                if(static_cast<unsigned>(pos) > from_slot) { -- pos; }
-                                if(static_cast<unsigned>(pos) >= to_slot) { ++ pos; }
-                            }
-                            new_card_marks[pos] = mark;
-                        }
-                        card_marks = new_card_marks;
-                    }
-                }
-                else
-                {
-                    skipped_simulations += evaluated_decks[cur_deck];
+                    // Then update best score/slot, print stuff
+                    std::cout << "Deck improved: " << deck_hash(best_commander, d1->cards) << " " << from_slot << " " << card_id_name(from_slot < best_cards.size() ? best_cards[from_slot] : NULL) <<
+                        " -> " << to_slot << " " << card_id_name(card_candidate) << ": ";
+                    best_score = current_score;
+                    best_cards = d1->cards;
+                    eval_commander = true;
+                    deck_has_been_improved = true;
+                    print_score_info(compare_results, proc.factors);
+                    print_deck_inline(best_score, best_commander, best_cards);
                 }
                 d1->cards = best_cards;
             }
             if(best_score == best_possible) { break; }
         }
     }
-    unsigned simulations = 0;
-    for(auto evaluation: evaluated_decks)
-    { simulations += evaluation.second; }
-    std::cout << "Evaluated " << evaluated_decks.size() << " decks (" << simulations << " + " << skipped_simulations << " simulations)." << std::endl;
     std::cout << "Optimized Deck: ";
-    final_print_deck_inline(best_score, best_commander, best_cards, true);
+    print_deck_inline(best_score, best_commander, best_cards);
 }
 //------------------------------------------------------------------------------
 // Implements iteration over all combination of k elements from n elements.
@@ -972,7 +807,7 @@ private:
 };
 //------------------------------------------------------------------------------
 static unsigned total_num_combinations_test(0);
-inline void try_all_ratio_combinations(unsigned deck_size, unsigned var_k, unsigned num_iterations, const std::vector<unsigned>& card_indices, std::vector<const Card*>& cards, const Card* commander, Process& proc, long double& best_score, boost::optional<Deck>& best_deck)
+inline void try_all_ratio_combinations(unsigned deck_size, unsigned var_k, unsigned num_iterations, const std::vector<unsigned>& card_indices, std::vector<const Card*>& cards, const Card* commander, Process& proc, double& best_score, boost::optional<Deck>& best_deck)
 {
     assert(card_indices.size() > 0);
     assert(card_indices.size() <= deck_size);
@@ -1009,13 +844,13 @@ inline void try_all_ratio_combinations(unsigned deck_size, unsigned var_k, unsig
         deck.set(commander, deck_cards);
         (*dynamic_cast<Deck*>(proc.att_deck)) = deck;
         auto new_results = proc.compare(num_iterations, best_score);
-        long double new_score = compute_score(new_results, proc.factors);
-        if(new_score > best_score)
+        double new_score = compute_score(new_results, proc.factors);
+        if(new_score-confidenza > best_score)
         {
             best_score = new_score;
             best_deck = deck;
             print_score_info(new_results, proc.factors);
-            print_deck_inline(best_score, commander, deck_cards, false);
+            print_deck_inline(best_score, commander, deck_cards);
         }
         //++num;
         // num_cards = num_cards_to_combine ...
@@ -1049,13 +884,13 @@ inline void try_all_ratio_combinations(unsigned deck_size, unsigned var_k, unsig
             deck.set(commander, deck_cards);
             *proc.att_deck = deck;
             auto new_results = proc.compare(num_iterations, best_score);
-            long double new_score = compute_score(new_results, proc.factors);
-            if(new_score > best_score)
+            double new_score = compute_score(new_results, proc.factors);
+            if(new_score-confidenza > best_score)
             {
                 best_score = new_score;
                 best_deck = deck;
                 print_score_info(new_results, proc.factors);
-                print_deck_inline(best_score, commander, deck_cards, false);
+                print_deck_inline(best_score, commander, deck_cards);
             }
             ++total_num_combinations_test;
             finished = cardAmounts.next();
@@ -1063,7 +898,7 @@ inline void try_all_ratio_combinations(unsigned deck_size, unsigned var_k, unsig
     }
 }
 //------------------------------------------------------------------------------
-void exhaustive_k(unsigned num_iterations, unsigned var_k, Process& proc, std::map<signed, char> card_marks)
+void exhaustive_k(unsigned num_iterations, unsigned var_k, Process& proc)
 {
     std::vector<const Card*> ass_structs;
     for(const Card* card: proc.cards.player_assaults)
@@ -1082,12 +917,12 @@ void exhaustive_k(unsigned num_iterations, unsigned var_k, Process& proc, std::m
     Combination cardIndices(var_n, var_k);
     const std::vector<unsigned>& indices = cardIndices.getIndices();
     bool finished(false);
-    long double best_score{0};
+    double best_score{0};
     boost::optional<Deck> best_deck;
     unsigned num_cards = ((Deck*)proc.att_deck)->cards.size();
     while(!finished)
     {
-        if(card_marks.count(-1))
+        if(keep_commander)
         {
             try_all_ratio_combinations(num_cards, var_k, num_iterations, indices, ass_structs, ((Deck*)proc.att_deck)->commander, proc, best_score, best_deck);
         }
@@ -1125,27 +960,18 @@ void print_available_decks(const Decks& decks, bool allow_card_pool)
         }
     }
 }
-//------------------------------------------------------------------------------
-void print_available_effects()
-{
-    std::cout << "Available effects:" << std::endl;
-    for(int i(1); i < Effect::num_effects; ++ i)
-    {
-        std::cout << i << " \"" << effect_names[i] << "\"" << std::endl;
-    }
-}
 
 void usage(int argc, char** argv)
 {
     std::cout << "usage: " << argv[0] << " Attacker Defender [Flags] [Operations]\n"
         "\n"
         "Attacker:\n"
-        "  the name/hash/cards of a custom deck.\n"
+        "  the deck name/hash of a custom deck.\n"
         "\n"
         "Defender:\n"
         "  semicolon separated list of defense decks, syntax:\n"
         "  deck1[:factor1];deck2[:factor2];...\n"
-        "  where deck is the name/hash/cards of a mission, raid, quest or custom deck, and factor is optional. The default factor is 1.\n"
+        "  where deck is the name/hash of a mission, raid, or custom deck, and factor is optional. The default factor is 1.\n"
         "  example: \'fear:0.2;slowroll:0.8\' means fear is the defense deck 20% of the time, while slowroll is the defense deck 80% of the time.\n"
         "\n"
         "Flags:\n"
@@ -1153,8 +979,8 @@ void usage(int argc, char** argv)
         "  -A <achievement>: optimize for the achievement specified by either id or name.\n"
         "  -c: don't try to optimize the commander.\n"
         "  -e <effect>: set the battleground effect. effect is automatically set for quests.\n"
-        "  minlen <size>: prevent hill climbing from shortening decks than <size> cards.\n"
-        "  maxlen <size>: prevent hill climbing from lengthening decks than <size> cards.\n"
+		"  -f: run VERY faster, but get worse results\n"
+        "  -fixedlen: prevent hill climbing from changing the number of cards.\n"
         "  -o: restrict hill climbing to the owned cards listed in \"ownedcards.txt\".\n"
         "  -o=<filename>: restrict hill climbing to the owned cards listed in <filename>.\n"
         "  -r: the attack deck is played in order instead of randomly (respects the 3 cards drawn limit).\n"
@@ -1177,17 +1003,12 @@ void usage(int argc, char** argv)
 int main(int argc, char** argv)
 {
     if(argc == 1) { usage(argc, argv); return(0); }
-    if(argc <= 2 && strcmp(argv[1], "-version") == 0)
-    {
-        std::cout << "Tyrant Optimizer " << TYRANT_OPTIMIZER_VERSION << std::endl;
-        return(0);
-    }
-    unsigned num_threads = 4;
-    DeckStrategy::DeckStrategy att_strategy(DeckStrategy::random);
-    DeckStrategy::DeckStrategy def_strategy(DeckStrategy::random);
+    debug_print = getenv("DEBUG_PRINT");
+    unsigned num_threads = (debug_print || getenv("DEBUG")) ? 1 : 4;
+    gamemode_t gamemode = fight;
+    bool ordered = false;
     Cards cards;
     read_cards(cards);
-    read_card_abbrs(cards, "cardabbrs.txt");
     Decks decks;
     Achievement achievement;
     load_decks_xml(decks, cards);
@@ -1207,13 +1028,8 @@ int main(int argc, char** argv)
     for(unsigned i(0); i < Effect::num_effects; ++i)
     {
         effect_map[effect_names[i]] = i;
-        std::stringstream ss;
-        ss << i;
-        effect_map[ss.str()] = i;
     }
 
-    bool keep_commander{false};
-    bool fixed_len{false};
     std::vector<std::tuple<unsigned, unsigned, Operation> > todo;
     for(int argIndex(3); argIndex < argc; ++argIndex)
     {
@@ -1244,26 +1060,19 @@ int main(int argc, char** argv)
             auto x = effect_map.find(arg_effect);
             if(x == effect_map.end())
             {
-                std::cout << "The effect '" << arg_effect << "' was not found. ";
-                print_available_effects();
+                std::cout << "The effect '" << arg_effect << "' was not found.\n";
                 return(6);
             }
             effect = static_cast<enum Effect>(x->second);
             argIndex += 1;
         }
+		else if(strcmp(argv[argIndex], "-f") == 0)
+        {
+            confidenza=0.001;
+        }
         else if(strcmp(argv[argIndex], "-fixedlen") == 0)
         {
             fixed_len = true;
-        }
-        else if(strcmp(argv[argIndex], "maxlen") == 0)
-        {
-            max_deck_len = atoi(argv[argIndex + 1]);
-            argIndex += 1;
-        }
-        else if(strcmp(argv[argIndex], "minlen") == 0)
-        {
-            min_deck_len = atoi(argv[argIndex + 1]);
-            argIndex += 1;
         }
         else if(strcmp(argv[argIndex], "-o") == 0)
         {
@@ -1275,29 +1084,13 @@ int main(int argc, char** argv)
             read_owned_cards(cards, owned_cards, argv[argIndex] + 3);
             use_owned_cards = true;
         }
-        else if(strcmp(argv[argIndex], "-r") == 0 || strcmp(argv[argIndex], "ordered") == 0)
+        else if(strcmp(argv[argIndex], "-r") == 0)
         {
-            att_strategy = DeckStrategy::ordered;
+            ordered = true;
         }
-        else if(strcmp(argv[argIndex], "exact-ordered") == 0)
-        {
-            att_strategy = DeckStrategy::exact_ordered;
-        }
-        else if(strcmp(argv[argIndex], "defender:ordered") == 0)
-        {
-            def_strategy = DeckStrategy::ordered;
-        }
-        else if(strcmp(argv[argIndex], "defender:exact-ordered") == 0)
-        {
-            def_strategy = DeckStrategy::exact_ordered;
-        }
-        else if(strcmp(argv[argIndex], "-s") == 0 || strcmp(argv[argIndex], "surge") == 0)
+        else if(strcmp(argv[argIndex], "-s") == 0)
         {
             gamemode = surge;
-        }
-        else if(strcmp(argv[argIndex], "tournament") == 0)
-        {
-            gamemode = tournament;
         }
         else if(strcmp(argv[argIndex], "-t") == 0)
         {
@@ -1308,10 +1101,6 @@ int main(int argc, char** argv)
         {
             turn_limit = atoi(argv[argIndex+1]);
             argIndex += 1;
-        }
-        else if(strcmp(argv[argIndex], "+v") == 0)
-        {
-            ++ debug_print;
         }
         else if(strcmp(argv[argIndex], "-wintie") == 0)
         {
@@ -1334,10 +1123,14 @@ int main(int argc, char** argv)
         }
         else if(strcmp(argv[argIndex], "debug") == 0)
         {
-            todo.push_back(std::make_tuple(0u, 45u, fightuntil));
+            debug_print = true;
+            num_threads = 1;
+            todo.push_back(std::make_tuple(0u, 25u, fightuntil));
         }
         else if(strcmp(argv[argIndex], "debuguntil") == 0)
         {
+            debug_print = true;
+            num_threads = 1;
             // fight until the last battle results in range [min_score, max_score].
             // E.g., 0 0: until lose; 1 1: until win (non-ANP); 10 25: until win (ANP).
             todo.push_back(std::make_tuple((unsigned)atoi(argv[argIndex + 1]), (unsigned)atoi(argv[argIndex + 2]), fightuntil));
@@ -1357,7 +1150,7 @@ int main(int argc, char** argv)
     }
     catch(const std::runtime_error& e)
     {
-        std::cerr << "Error: Deck " << att_deck_name << ": " << e.what() << std::endl;
+        std::cerr << "Error: Deck hash " << att_deck_name << ": " << e.what() << std::endl;
         return(5);
     }
     if(att_deck == nullptr)
@@ -1374,18 +1167,18 @@ int main(int argc, char** argv)
         print_available_decks(decks, false);
         return(5);
     }
-    att_deck->strategy = att_strategy;
-    if(keep_commander)
+    if(ordered)
     {
-        att_deck->card_marks[-1] = '!';
-    }
-    if(fixed_len)
-    {
-        min_deck_len = max_deck_len = att_deck->cards.size();
+        att_deck->strategy = DeckStrategy::ordered;
     }
 
+    boost::optional<Effect> quest_effect;
+    if(effect != Effect::none)
+    {
+        quest_effect = effect;
+    }
     std::vector<Deck*> def_decks;
-    std::vector<long double> def_decks_factors;
+    std::vector<double> def_decks_factors;
     for(auto deck_parsed: deck_list_parsed)
     {
         Deck* def_deck{nullptr};
@@ -1395,7 +1188,7 @@ int main(int argc, char** argv)
         }
         catch(const std::runtime_error& e)
         {
-            std::cerr << "Error: Deck " << deck_parsed.first << ": " << e.what() << std::endl;
+            std::cerr << "Error: Deck hash " << deck_parsed.first << ": " << e.what() << std::endl;
             return(5);
         }
         if(def_deck == nullptr)
@@ -1421,27 +1214,25 @@ int main(int argc, char** argv)
         Effect this_effect = def_deck->effect;
         if(this_effect != Effect::none)
         {
-            if(effect != Effect::none && effect != this_effect)
+            if(quest_effect && *quest_effect != this_effect)
             {
-                std::cerr << "Error: Inconsistent effects: " << effect_names[effect] << " and " << effect_names[this_effect] << ".\n";
+                std::cerr << "Error: Inconsistent effects: " << effect_names[*quest_effect] << " and " << effect_names[this_effect] << ".\n";
                 return(7);
             }
-            effect = this_effect;
+            quest_effect = this_effect;
         }
-        def_deck->strategy = def_strategy;
         def_decks.push_back(def_deck);
         def_decks_factors.push_back(deck_parsed.second);
     }
 
+    effect = quest_effect.get_value_or(effect);
     modify_cards(cards, effect);
-    std::cout << "Attacker: " << (debug_print ? att_deck->long_description(cards) : att_deck->short_description()) << std::endl;
+    std::cout << "Attacker:" << std::endl;
+    std::cout << att_deck->long_description() << std::endl;
+    std::cout << "Defender:" << std::endl;
     for(auto def_deck: def_decks)
     {
-        std::cout << "Defender: " << (debug_print ? def_deck->long_description(cards) : def_deck->short_description()) << std::endl;
-    }
-    if(effect != Effect::none)
-    {
-        std::cout << "Effect: " << effect_names[effect] << std::endl;
+        std::cout << def_deck->long_description() << std::endl;
     }
 
     Process p(num_threads, cards, decks, att_deck, def_decks, def_decks_factors, gamemode, effect, achievement);
@@ -1452,44 +1243,33 @@ int main(int argc, char** argv)
             switch(std::get<2>(op))
             {
             case bruteforce: {
-                exhaustive_k(std::get<1>(op), std::get<0>(op), p, att_deck->card_marks);
+                exhaustive_k(std::get<1>(op), std::get<0>(op), p);
                 break;
             }
             case climb: {
-                if(att_strategy == DeckStrategy::random)
+                if(!ordered)
                 {
-                    hill_climbing(std::get<0>(op), att_deck, p, att_deck->card_marks);
+                    hill_climbing(std::get<0>(op), att_deck, p);
                 }
                 else
                 {
-                    hill_climbing_ordered(std::get<0>(op), att_deck, p, att_deck->card_marks);
+                    hill_climbing_ordered(std::get<0>(op), att_deck, p);
                 }
                 break;
             }
             case simulate: {
                 auto results = p.evaluate(std::get<0>(op));
-                print_results(results, p.factors);
+                print_score_info(results,p.factors);
                 break;
             }
             case fightuntil: {
-                unsigned saved_num_threads = num_threads;
-                num_threads = 1;
-                ++ debug_print;
-                ++ debug_cached;
                 while(1)
                 {
-                    debug_str.clear();
                     auto results = p.evaluate(1);
-                    long double score = compute_score(results, p.factors);
-                    if(score >= std::get<0>(op) && score <= std::get<1>(op)) {
-                        std::cout << debug_str << std::flush;
-                        print_results(results, p.factors);
-                        break;
-                    }
+                    print_score_info(results, p.factors);
+                    double score = compute_score(results, p.factors);
+                    if(score >= std::get<0>(op) && score <= std::get<1>(op)) { break; }
                 }
-                -- debug_cached;
-                -- debug_print;
-                num_threads = saved_num_threads;
                 break;
             }
             }
