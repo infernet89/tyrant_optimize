@@ -1093,7 +1093,7 @@ void evaluate_legion(Field* fd)
     for(fd->current_ci = 0; fd->current_ci < assaults.size(); ++fd->current_ci)
     {
         CardStatus* status(&assaults[fd->current_ci]);
-        unsigned legion_base = fd->effect == Effect::united_front ? status->m_card->m_delay : status->m_card->m_legion; 
+        unsigned legion_base = fd->effect == Effect::united_front ? status->m_card->m_delay : status->m_card->m_legion;
         if(legion_base == 0)
         {
             continue;
@@ -1603,7 +1603,7 @@ inline bool skill_predicate<chaos>(Field* fd, CardStatus* src, CardStatus* c, co
     const auto& mod = std::get<4>(s);
     return(!c->m_chaosed && can_act(c) &&  // (fd->tapi == c->m_player ? is_active(c) && !is_attacking_or_has_attacked(c) : is_active_next_turn(c)));
             (mod == SkillMod::on_attacked ? is_active(c) && !is_attacking_or_has_attacked(c) :
-             mod == SkillMod::on_death ? (fd->tapi != src->m_player ? is_active(c) && !has_attacked(c) : is_active_next_turn(c)) :
+             mod == SkillMod::on_death ? c->m_index >= src->m_index && (fd->tapi != src->m_player ? is_active(c) : is_active_next_turn(c)) :
              is_active(c) || is_active_next_turn(c)));
 }
 
@@ -1646,7 +1646,7 @@ inline bool skill_predicate<jam>(Field* fd, CardStatus* src, CardStatus* c, cons
     const auto& mod = std::get<4>(s);
     return(can_act(c) &&  // (fd->tapi == c->m_player ? is_active(c) && !is_attacking_or_has_attacked(c) : is_active_next_turn(c)));
             (mod == SkillMod::on_attacked ? is_active(c) && !is_attacking_or_has_attacked(c) :
-             mod == SkillMod::on_death ? (fd->tapi != src->m_player ? is_active(c) && !has_attacked(c) : is_active_next_turn(c)) :
+             mod == SkillMod::on_death ? c->m_index >= src->m_index && (fd->tapi != src->m_player ? is_active(c) : is_active_next_turn(c)) :
              is_active(c) || is_active_next_turn(c)));
 }
 
@@ -1694,7 +1694,7 @@ inline bool skill_predicate<weaken>(Field* fd, CardStatus* src, CardStatus* c, c
     const auto& mod = std::get<4>(s);
     return(can_attack(c) && attack_power(c) > 0 &&  // (fd->tapi == c->m_player ? is_active(c) && !is_attacking_or_has_attacked(c) : is_active_next_turn(c)));
             (mod == SkillMod::on_attacked ? is_active(c) && !is_attacking_or_has_attacked(c) :
-             mod == SkillMod::on_death ? (fd->tapi != src->m_player ? is_active(c) && !has_attacked(c) : is_active_next_turn(c)) :
+             mod == SkillMod::on_death ? c->m_index >= src->m_index && (fd->tapi != src->m_player ? is_active(c) : is_active_next_turn(c)) :
              is_active(c) || is_active_next_turn(c)));
 }
 
