@@ -348,7 +348,7 @@ void Hand::reset(std::mt19937& re)
 // Everything about how a battle plays out, except the following:
 // the implementation of the attack by an assault card is in the next section;
 // the implementation of the active skills is in the section after that.
-unsigned turn_limit{50};
+unsigned turn_limit{0};
 //------------------------------------------------------------------------------
 inline unsigned opponent(unsigned player)
 {
@@ -585,8 +585,11 @@ Results<unsigned> play(Field* fd)
     fd->achievement_counter.clear();
     fd->achievement_counter.resize(fd->achievement.req_counter.size());
 
+#if 0
     // ANP: Last decision point is second-to-last card played.
     fd->points_since_last_decision = 0;
+#endif
+    fd->all_damage_to_commander = 0;
     unsigned p0_size = fd->players[0]->deck->cards.size();
     fd->last_decision_turn = p0_size == 1 ? 0 : p0_size * 2 - (fd->gamemode == surge ? 2 : 3);
 
@@ -600,12 +603,14 @@ Results<unsigned> play(Field* fd)
         // Initialize stuff, remove dead cards
         _DEBUG_MSG(1, "------------------------------------------------------------------------\n"
                 "TURN %u begins for %s\n", fd->turn, status_description(&fd->tap->commander).c_str());
+#if 0
         // ANP: If it's the player's turn and he's making a decision,
         // reset his points to 0.
         if(fd->tapi == 0 && fd->turn <= fd->last_decision_turn)
         {
             fd->points_since_last_decision = 0;
         }
+#endif
         turn_start_phase(fd);
         // Special case: refresh on commander
         if(fd->tip->commander.m_card->m_refresh)
@@ -709,42 +714,62 @@ Results<unsigned> play(Field* fd)
         fd->inc_counter(fd->achievement.misc_req, AchievementMiscReq::turns);
     }
     bool made_achievement = true;
-    for(unsigned i(0); made_achievement && i < fd->achievement.req_counter.size(); ++i)
+    if(fd->optimization_mode == OptimizationMode::achievement)
     {
-        made_achievement = made_achievement && fd->achievement.req_counter[i].check(fd->achievement_counter[i]);
+        fd->set_counter(fd->achievement.misc_req, AchievementMiscReq::com_total, fd->all_damage_to_commander);
+        for(unsigned i(0); made_achievement && i < fd->achievement.req_counter.size(); ++i)
+        {
+            made_achievement = made_achievement && fd->achievement.req_counter[i].check(fd->achievement_counter[i]);
+        }
+        if(debug_print)
+        {
+            print_achievement_results(fd);
+        }
     }
-    if(debug_print)
-    {
-        print_achievement_results(fd);
-    }
-    // defender wins
+    // you lose
     if(fd->players[0]->commander.m_hp == 0)
     {
-        _DEBUG_MSG(1, "Defender wins.\n");
+        _DEBUG_MSG(1, "You lose.\n");
         return {0, 0, 1, 0};
     }
-    // achievement: assuming winner='1'
-    if (!made_achievement)
+    // you win in raid
+    if(fd->optimization_mode == OptimizationMode::raid)
     {
-        _DEBUG_MSG(1, "Achievement fails.\n");
-        return {0, 0, 1, 0};
+        if(fd->players[1]->commander.m_hp == 0)
+        {
+            _DEBUG_MSG(1, "You win (boss killed).\n");
+            return {1, 0, 0, 250};
+        }
+        else
+        {
+            _DEBUG_MSG(1, "You win (survival).\n");
+            return {0, 1, 0, std::min(fd->all_damage_to_commander, 200u)};
+        }
     }
-    // attacker wins
+    // you win
     if(fd->players[1]->commander.m_hp == 0)
     {
+        if (fd->optimization_mode == OptimizationMode::achievement && !made_achievement)
+        {
+            _DEBUG_MSG(1, "You win but no achievement.\n");
+            return {1, 0, 0, 0};
+        }
+        _DEBUG_MSG(1, "You win.\n");
+#if 0
         // ANP: Speedy if turn < last_decision + 10.
         bool speedy = fd->turn < fd->last_decision_turn + 10;
         if(fd->points_since_last_decision > 10)
         {
             fd->points_since_last_decision = 10;
         }
-        _DEBUG_MSG(1, "Attacker wins.\n");
-        return {1, 0, 0, 10 + (speedy ? 5 : 0) + (fd->gamemode == surge ? 20 : 0) + fd->points_since_last_decision};
+        return {1, 0, 0, 10 + (speedy ? 5 : 0) + (fd->gamemode == surge ? 20 : 0) + fd->points_since_last_decision, 0};
+#endif
+        return {1, 0, 0, 1};
     }
     if (fd->turn > turn_limit)
     {
         _DEBUG_MSG(1, "Stall after %u turns.\n", turn_limit);
-        return {0, 1, 0, 0};
+        return {0, 1, 0, fd->optimization_mode == OptimizationMode::defense};
     }
 
     // Huh? How did we get here?
@@ -1044,7 +1069,7 @@ void turn_start_phase(Field* fd)
             CardStatus& status(assaults[index]);
             status.m_index = index;
             status.m_augmented = 0;
-            status.m_blitzing = false;
+            status.m_blitzing = status.m_blitzing && status.m_jammed;
             status.m_chaosed = false;
             status.m_enfeebled = 0;
             status.m_frozen = false;
@@ -1164,8 +1189,10 @@ void remove_commander_hp(Field* fd, CardStatus& status, unsigned dmg, bool count
     // Points are awarded for overkill, so it is correct to simply add dmg.
     if(count_points && status.m_player == 1)
     {
+#if 0
         fd->points_since_last_decision += dmg;
-        fd->inc_counter(fd->achievement.misc_req, AchievementMiscReq::com_total, dmg);
+#endif
+        fd->all_damage_to_commander += dmg;
     }
     if(status.m_hp == 0)
     {
@@ -1602,7 +1629,7 @@ inline bool skill_predicate<chaos>(Field* fd, CardStatus* src, CardStatus* c, co
 {
     const auto& mod = std::get<4>(s);
     return(!c->m_chaosed && can_act(c) &&  // (fd->tapi == c->m_player ? is_active(c) && !is_attacking_or_has_attacked(c) : is_active_next_turn(c)));
-            (mod == SkillMod::on_attacked ? is_active(c) && !is_attacking_or_has_attacked(c) :
+            (mod == SkillMod::on_attacked ? is_active(c) && c->m_index > fd->current_ci :
              mod == SkillMod::on_death ? c->m_index >= src->m_index && (fd->tapi != src->m_player ? is_active(c) : is_active_next_turn(c)) :
              is_active(c) || is_active_next_turn(c)));
 }
@@ -1645,7 +1672,7 @@ inline bool skill_predicate<jam>(Field* fd, CardStatus* src, CardStatus* c, cons
 {
     const auto& mod = std::get<4>(s);
     return(can_act(c) &&  // (fd->tapi == c->m_player ? is_active(c) && !is_attacking_or_has_attacked(c) : is_active_next_turn(c)));
-            (mod == SkillMod::on_attacked ? is_active(c) && !is_attacking_or_has_attacked(c) :
+            (mod == SkillMod::on_attacked ? is_active(c) && c->m_index > fd->current_ci :
              mod == SkillMod::on_death ? c->m_index >= src->m_index && (fd->tapi != src->m_player ? is_active(c) : is_active_next_turn(c)) :
              is_active(c) || is_active_next_turn(c)));
 }
@@ -1693,7 +1720,7 @@ inline bool skill_predicate<weaken>(Field* fd, CardStatus* src, CardStatus* c, c
 {
     const auto& mod = std::get<4>(s);
     return(can_attack(c) && attack_power(c) > 0 &&  // (fd->tapi == c->m_player ? is_active(c) && !is_attacking_or_has_attacked(c) : is_active_next_turn(c)));
-            (mod == SkillMod::on_attacked ? is_active(c) && !is_attacking_or_has_attacked(c) :
+            (mod == SkillMod::on_attacked ? is_active(c) && c->m_index > fd->current_ci :
              mod == SkillMod::on_death ? c->m_index >= src->m_index && (fd->tapi != src->m_player ? is_active(c) : is_active_next_turn(c)) :
              is_active(c) || is_active_next_turn(c)));
 }
