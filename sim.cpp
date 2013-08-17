@@ -143,10 +143,6 @@ inline void CardStatus::set(const Card& card)
     m_step = CardStep::none;
 }
 //------------------------------------------------------------------------------
-inline unsigned safe_minus(unsigned x, unsigned y)
-{
-    return(x - std::min(x, y));
-}
 inline int attack_power(CardStatus* att)
 {
     return(safe_minus(att->m_card->m_attack + att->m_berserk + att->m_rallied, att->m_weakened));
@@ -348,7 +344,7 @@ void Hand::reset(std::mt19937& re)
 // Everything about how a battle plays out, except the following:
 // the implementation of the attack by an assault card is in the next section;
 // the implementation of the active skills is in the section after that.
-unsigned turn_limit{0};
+unsigned turn_limit{50};
 //------------------------------------------------------------------------------
 inline unsigned opponent(unsigned player)
 {
@@ -572,7 +568,7 @@ void turn_start_phase(Field* fd);
 void evaluate_legion(Field* fd);
 bool check_and_perform_refresh(Field* fd, CardStatus* src_status);
 // return value : (raid points) -> attacker wins, 0 -> defender wins
-Results<unsigned> play(Field* fd)
+Results<uint64_t> play(Field* fd)
 {
     fd->players[0]->commander.m_player = 0;
     fd->players[1]->commander.m_player = 1;
@@ -589,7 +585,6 @@ Results<unsigned> play(Field* fd)
     // ANP: Last decision point is second-to-last card played.
     fd->points_since_last_decision = 0;
 #endif
-    fd->all_damage_to_commander = 0;
     unsigned p0_size = fd->players[0]->deck->cards.size();
     fd->last_decision_turn = p0_size == 1 ? 0 : p0_size * 2 - (fd->gamemode == surge ? 2 : 3);
 
@@ -685,6 +680,7 @@ Results<unsigned> play(Field* fd)
                 current_status.m_step = CardStep::attacked;
                 continue;
             }
+            current_status.m_blitzing = false;
             // Evaluate skills
             evaluate_skills(fd, &current_status, current_status.m_card->m_skills);
             if(__builtin_expect(fd->end, false)) { break; }
@@ -716,7 +712,6 @@ Results<unsigned> play(Field* fd)
     bool made_achievement = true;
     if(fd->optimization_mode == OptimizationMode::achievement)
     {
-        fd->set_counter(fd->achievement.misc_req, AchievementMiscReq::com_total, fd->all_damage_to_commander);
         for(unsigned i(0); made_achievement && i < fd->achievement.req_counter.size(); ++i)
         {
             made_achievement = made_achievement && fd->achievement.req_counter[i].check(fd->achievement_counter[i]);
@@ -730,7 +725,7 @@ Results<unsigned> play(Field* fd)
     if(fd->players[0]->commander.m_hp == 0)
     {
         _DEBUG_MSG(1, "You lose.\n");
-        return {0, 0, 1, 0};
+        return {0, 0, 1, 0, 0};
     }
     // you win in raid
     if(fd->optimization_mode == OptimizationMode::raid)
@@ -738,12 +733,12 @@ Results<unsigned> play(Field* fd)
         if(fd->players[1]->commander.m_hp == 0)
         {
             _DEBUG_MSG(1, "You win (boss killed).\n");
-            return {1, 0, 0, 250};
+            return {1, 0, 0, 250, 0};
         }
         else
         {
             _DEBUG_MSG(1, "You win (survival).\n");
-            return {0, 1, 0, std::min(fd->all_damage_to_commander, 200u)};
+            return {0, 1, 0, fd->players[1]->commander.m_card->m_health - fd->players[1]->commander.m_hp, 0};
         }
     }
     // you win
@@ -752,7 +747,7 @@ Results<unsigned> play(Field* fd)
         if (fd->optimization_mode == OptimizationMode::achievement && !made_achievement)
         {
             _DEBUG_MSG(1, "You win but no achievement.\n");
-            return {1, 0, 0, 0};
+            return {1, 0, 0, 0, 0};
         }
         _DEBUG_MSG(1, "You win.\n");
 #if 0
@@ -764,17 +759,17 @@ Results<unsigned> play(Field* fd)
         }
         return {1, 0, 0, 10 + (speedy ? 5 : 0) + (fd->gamemode == surge ? 20 : 0) + fd->points_since_last_decision, 0};
 #endif
-        return {1, 0, 0, 1};
+        return {1, 0, 0, 100, 0};
     }
     if (fd->turn > turn_limit)
     {
         _DEBUG_MSG(1, "Stall after %u turns.\n", turn_limit);
-        return {0, 1, 0, fd->optimization_mode == OptimizationMode::defense};
+        return {0, 1, 0, fd->optimization_mode == OptimizationMode::defense ? 100ul : 0ul, 0};
     }
 
     // Huh? How did we get here?
     assert(false);
-    return {0, 0, 0, 0};
+    return {0, 0, 0, 0, 0};
 }
 
 // Roll a coin in case an Activation skill has 50% chance to proc.
@@ -1069,7 +1064,6 @@ void turn_start_phase(Field* fd)
             CardStatus& status(assaults[index]);
             status.m_index = index;
             status.m_augmented = 0;
-            status.m_blitzing = status.m_blitzing && status.m_jammed;
             status.m_chaosed = false;
             status.m_enfeebled = 0;
             status.m_frozen = false;
@@ -1192,7 +1186,7 @@ void remove_commander_hp(Field* fd, CardStatus& status, unsigned dmg, bool count
 #if 0
         fd->points_since_last_decision += dmg;
 #endif
-        fd->all_damage_to_commander += dmg;
+        fd->inc_counter(fd->achievement.misc_req, AchievementMiscReq::com_total, dmg);
     }
     if(status.m_hp == 0)
     {
@@ -1719,7 +1713,7 @@ template<>
 inline bool skill_predicate<weaken>(Field* fd, CardStatus* src, CardStatus* c, const SkillSpec& s)
 {
     const auto& mod = std::get<4>(s);
-    return(can_attack(c) && attack_power(c) > 0 &&  // (fd->tapi == c->m_player ? is_active(c) && !is_attacking_or_has_attacked(c) : is_active_next_turn(c)));
+    return(can_act(c) && !c->m_immobilized && attack_power(c) > 0 &&  // (fd->tapi == c->m_player ? is_active(c) && !is_attacking_or_has_attacked(c) : is_active_next_turn(c)));
             (mod == SkillMod::on_attacked ? is_active(c) && c->m_index > fd->current_ci :
              mod == SkillMod::on_death ? c->m_index >= src->m_index && (fd->tapi != src->m_player ? is_active(c) : is_active_next_turn(c)) :
              is_active(c) || is_active_next_turn(c)));
@@ -1738,8 +1732,8 @@ inline void perform_skill<augment>(Field* fd, CardStatus* c, unsigned v)
 template<>
 inline void perform_skill<backfire>(Field* fd, CardStatus* c, unsigned v)
 {
-    // backfire damage not count in ANP.
-    remove_commander_hp(fd, *c, v, false);
+    // backfire damage counts in ARD.
+    remove_commander_hp(fd, *c, v, true);
 }
 
 template<>
@@ -1820,7 +1814,7 @@ inline void perform_skill<rush>(Field* fd, CardStatus* c, unsigned v)
 template<>
 inline void perform_skill<shock>(Field* fd, CardStatus* c, unsigned v)
 {
-    // shock damage counts in ANP. (if attacker ever has the skill)
+    // shock damage counts in ARD. (if attacker ever has the skill)
     remove_commander_hp(fd, *c, v, true);
 }
 

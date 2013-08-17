@@ -1,7 +1,7 @@
 #ifndef TYRANT_H_INCLUDED
 #define TYRANT_H_INCLUDED
 
-#define TYRANT_OPTIMIZER_VERSION "1.1.1"
+#define TYRANT_OPTIMIZER_VERSION "1.1.2"
 
 #include <string>
 #include <set>
@@ -130,7 +130,6 @@ enum gamemode_t
 
 enum class OptimizationMode
 {
-    none,
     winrate,
     achievement,
     raid,

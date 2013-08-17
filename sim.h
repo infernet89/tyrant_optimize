@@ -22,6 +22,11 @@ extern bool debug_line;
 extern std::string debug_str;
 extern unsigned turn_limit;
 
+inline unsigned safe_minus(unsigned x, unsigned y)
+{
+    return(x - std::min(x, y));
+}
+
 //---------------------- Represent Simulation Results ----------------------------
 template<typename result_type>
 struct Results
@@ -30,6 +35,7 @@ struct Results
     result_type draws;
     result_type losses;
     result_type points;
+    result_type sq_points;
     template<typename other_result_type>
     Results& operator+=(const Results<other_result_type>& other)
     {
@@ -37,12 +43,13 @@ struct Results
         draws += other.draws;
         losses += other.losses;
         points += other.points;
+        sq_points += other.points * other.points;
         return *this;
     }
 };
 
 void fill_skill_table();
-Results<unsigned> play(Field* fd);
+Results<uint64_t> play(Field* fd);
 void modify_cards(Cards& cards, enum Effect effect);
 // Pool-based indexed storage.
 //---------------------- Pool-based indexed storage ----------------------------
@@ -195,7 +202,7 @@ public:
     const Achievement& achievement;
     // With the introduction of on death skills, a single skill can trigger arbitrary many skills.
     // They are stored in this, and cleared after all have been performed.
-    std::deque<std::tuple<CardStatus*, SkillSpec> > skill_queue;
+    std::deque<std::tuple<CardStatus*, SkillSpec>> skill_queue;
     std::vector<CardStatus*> killed_with_on_death;
     std::vector<CardStatus*> killed_with_regen;
     enum phase
@@ -214,7 +221,6 @@ public:
     unsigned current_ci;
     unsigned last_decision_turn;
 //    unsigned points_since_last_decision;
-    unsigned all_damage_to_commander;
 
     unsigned fusion_count;
     std::vector<unsigned> achievement_counter;
