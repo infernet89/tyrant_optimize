@@ -50,6 +50,7 @@ namespace {
     bool auto_upgrade_cards{true};
     long double target_score{100};
     bool show_stdev{false};
+    bool use_harmonic_mean{false};
 }
 
 using namespace std::placeholders;
@@ -110,7 +111,10 @@ void claim_cards(const std::vector<const Card*> & card_list, const Cards & cards
             if(num_to_claim > 0)
             {
                 owned_cards[card->m_id] += num_to_claim;
-//                std::cout << "Claim " << card->m_name << " (" << num_to_claim << ")" << std::endl;
+                if(debug_print)
+                {
+                    std::cout << "Claim " << card->m_name << " (" << num_to_claim << ")" << std::endl;
+                }
             }
         }
     }
@@ -198,14 +202,20 @@ Results<long double> compute_score(const std::pair<std::vector<Results<uint64_t>
         final.wins += results.first[index].wins * factors[index];
         final.draws += results.first[index].draws * factors[index];
         final.losses += results.first[index].losses * factors[index];
-        final.points += results.first[index].points * factors[index];
+        if(use_harmonic_mean)
+        { final.points += factors[index] / results.first[index].points; }
+        else
+        { final.points += results.first[index].points * factors[index]; }
         final.sq_points += results.first[index].sq_points * factors[index] * factors[index];
     }
     long double factor_sum = std::accumulate(factors.begin(), factors.end(), 0.);
     final.wins /= factor_sum * (long double)results.second;
     final.draws /= factor_sum * (long double)results.second;
     final.losses /= factor_sum * (long double)results.second;
-    final.points /= factor_sum * (long double)results.second;
+    if(use_harmonic_mean)
+    { final.points = factor_sum / ((long double)results.second * final.points); }
+    else
+    { final.points /= factor_sum * (long double)results.second; }
     final.sq_points /= factor_sum * factor_sum * (long double)results.second;
     return final;
 }
@@ -276,7 +286,7 @@ struct SimulationData
         {
             att_hand.reset(re);
             def_hand->reset(re);
-            Field fd(re, cards, att_hand, *def_hand, gamemode, optimization_mode, effect, achievement);
+            Field fd(re, cards, att_hand, *def_hand, gamemode, optimization_mode, effect != Effect::none ? effect : def_hand->deck->effect, achievement);
             Results<uint64_t> result(play(&fd));
             res.emplace_back(result);
         }
@@ -573,6 +583,7 @@ void print_deck_inline(const unsigned deck_cost, const Results<long double> scor
     }
     std::cout << std::endl;
 }
+//------------------------------------------------------------------------------
 //ROBAMIA la funzione qui sotto
 void final_print_deck_inline(const Results<long double> score, const Card *commander, std::vector<const Card*> cards, bool is_ordered)
 {
@@ -592,7 +603,7 @@ void final_print_deck_inline(const Results<long double> score, const Card *comma
             break;
     }
     if (optimization_mode == OptimizationMode::raid) std::cout << score.points << "%: ------- " << std::endl << commander->m_name;
-	else std::cout << score.points * 100.0 << "%: ------- " << std::endl << commander->m_name;
+	else std::cout << score.points << "%: ------- " << std::endl << commander->m_name;
     if(!is_ordered)
     {
         std::sort(cards.begin(), cards.end(), [](const Card* a, const Card* b) { return a->m_id < b->m_id; });
@@ -750,7 +761,10 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc, std::map<si
     for(auto evaluation: evaluated_decks)
     { simulations += evaluation.second; }
     std::cout << "Evaluated " << evaluated_decks.size() << " decks (" << simulations << " + " << skipped_simulations << " simulations)." << std::endl;
-    final_print_deck_inline(best_score, best_commander, best_cards, false); //ROBAMIA
+    std::cout << "Optimized Deck: ";
+    print_deck_inline(get_deck_cost(d1, proc.cards), best_score, best_commander, best_cards, false);
+	std::cout << "Optimized Deck: ";
+	final_print_deck_inline(best_score, best_commander, best_cards, false); //ROBAMIA
 }
 //------------------------------------------------------------------------------
 void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc, std::map<signed, char> card_marks)
@@ -899,7 +913,10 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc, std
     for(auto evaluation: evaluated_decks)
     { simulations += evaluation.second; }
     std::cout << "Evaluated " << evaluated_decks.size() << " decks (" << simulations << " + " << skipped_simulations << " simulations)." << std::endl;
-    final_print_deck_inline(best_score, best_commander, best_cards, false); //ROBAMIA
+    std::cout << "Optimized Deck: ";
+    print_deck_inline(get_deck_cost(d1, proc.cards), best_score, best_commander, best_cards, true);
+	 std::cout << "Optimized Deck: ";
+	final_print_deck_inline(best_score, best_commander, best_cards, false); //ROBAMIA
 }
 //------------------------------------------------------------------------------
 // Implements iteration over all combination of k elements from n elements.
@@ -1213,17 +1230,6 @@ int main(int argc, char** argv)
             turn_limit = 30;
             target_score = 250;
         }
-        // Set quest effect:
-        Effect this_effect = def_deck->effect;
-        if(this_effect != Effect::none)
-        {
-            if(effect != Effect::none && effect != this_effect)
-            {
-                std::cerr << "Error: Inconsistent effects: " << effect_names[effect] << " and " << effect_names[this_effect] << ".\n";
-                return(7);
-            }
-            effect = this_effect;
-        }
         def_decks.push_back(def_deck);
         def_decks_factors.push_back(deck_parsed.second);
     }
@@ -1384,6 +1390,10 @@ int main(int argc, char** argv)
         {
             show_stdev = true;
         }
+        else if(strcmp(argv[argIndex], "+hm") == 0)
+        {
+            use_harmonic_mean = true;
+        }
         else if(strcmp(argv[argIndex], "+v") == 0)
         {
             ++ debug_print;
@@ -1448,7 +1458,6 @@ int main(int argc, char** argv)
         min_deck_len = max_deck_len = att_deck->cards.size();
     }
 
-    modify_cards(cards, effect);
     std::cout << "Your Deck: " << (debug_print ? att_deck->long_description(cards) : att_deck->short_description()) << std::endl;
     for(auto def_deck: def_decks)
     {
@@ -1460,6 +1469,7 @@ int main(int argc, char** argv)
     }
 
     Process p(num_threads, cards, decks, att_deck, def_decks, def_decks_factors, gamemode, effect, achievement);
+
     {
         //ScopeClock timer;
         for(auto op: todo)
