@@ -583,7 +583,6 @@ void print_deck_inline(const unsigned deck_cost, const Results<long double> scor
     }
     std::cout << std::endl;
 }
-//------------------------------------------------------------------------------
 //ROBAMIA la funzione qui sotto
 void final_print_deck_inline(const Results<long double> score, const Card *commander, std::vector<const Card*> cards, bool is_ordered)
 {
@@ -762,9 +761,7 @@ void hill_climbing(unsigned num_iterations, Deck* d1, Process& proc, std::map<si
     { simulations += evaluation.second; }
     std::cout << "Evaluated " << evaluated_decks.size() << " decks (" << simulations << " + " << skipped_simulations << " simulations)." << std::endl;
     std::cout << "Optimized Deck: ";
-    print_deck_inline(get_deck_cost(d1, proc.cards), best_score, best_commander, best_cards, false);
-	std::cout << "Optimized Deck: ";
-	final_print_deck_inline(best_score, best_commander, best_cards, false); //ROBAMIA
+    final_print_deck_inline(best_score, best_commander, best_cards, false); //ROBAMIA
 }
 //------------------------------------------------------------------------------
 void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc, std::map<signed, char> card_marks)
@@ -914,9 +911,7 @@ void hill_climbing_ordered(unsigned num_iterations, Deck* d1, Process& proc, std
     { simulations += evaluation.second; }
     std::cout << "Evaluated " << evaluated_decks.size() << " decks (" << simulations << " + " << skipped_simulations << " simulations)." << std::endl;
     std::cout << "Optimized Deck: ";
-    print_deck_inline(get_deck_cost(d1, proc.cards), best_score, best_commander, best_cards, true);
-	 std::cout << "Optimized Deck: ";
-	final_print_deck_inline(best_score, best_commander, best_cards, false); //ROBAMIA
+    final_print_deck_inline(best_score, best_commander, best_cards, false); //ROBAMIA
 }
 //------------------------------------------------------------------------------
 // Implements iteration over all combination of k elements from n elements.
@@ -1118,7 +1113,7 @@ void usage(int argc, char** argv)
         "\n"
         "Flags:\n"
         "  -A <achievement>: optimize for the achievement specified by either id or name.\n"
-        "  -e <effect>: set the battleground effect. effect is automatically set for quests.\n"
+        "  -e <effect>: set the battleground effect. effect is automatically set for quests and raids.\n"
         "  -r: the attack deck is played in order instead of randomly (respects the 3 cards drawn limit).\n"
         "  -s: use surge (default is fight).\n"
         "  -t <num>: set the number of threads, default is 4.\n"
@@ -1401,6 +1396,14 @@ int main(int argc, char** argv)
         else if(strcmp(argv[argIndex], "hand") == 0)  // set initial hand for test
         {
             att_deck->set_given_hand(cards, argv[argIndex + 1]);
+            argIndex += 1;
+        }
+        else if(strcmp(argv[argIndex], "defender:hand") == 0)  // set enemies' initial hand for test
+        {
+            for(auto def_deck: def_decks)
+            {
+                def_deck->set_given_hand(cards, argv[argIndex + 1]);
+            }
             argIndex += 1;
         }
         else if(strcmp(argv[argIndex], "sim") == 0)
